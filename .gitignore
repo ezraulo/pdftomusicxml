@@ -1,0 +1,14 @@
+# npm
+node_modules/
+.npm/
+
+# config files
+config.json
+
+# Temporary
+temp/
+
+# logs and application-specific
+mscz-api.log
+dist/
+*firebase*
