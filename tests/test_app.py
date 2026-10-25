@@ -101,3 +101,17 @@ def test_errors(client, kwargs, status, fragment):
 def test_missing_file(client):
     r = client.post("/convert", data={}, content_type="multipart/form-data")
     assert r.status_code == 400
+
+
+def test_violy_tempo(client):
+    r = _post(client, format="violy", mscz="0", tempo="66")
+    z = zipfile.ZipFile(io.BytesIO(r.data))
+    root = ET.fromstring(z.read("Untitled-19-Violoncellos.musicxml"))
+    assert root.find(".//sound").get("tempo") == "66"
+    assert "66 BPM" in z.read("READ-ME-violy.txt").decode()
+
+
+@pytest.mark.parametrize("tempo", ["fast", "0", "999"])
+def test_violy_bad_tempo(client, tempo):
+    r = _post(client, format="violy", tempo=tempo)
+    assert r.status_code == 400 and "tempo" in r.get_json()["error"]

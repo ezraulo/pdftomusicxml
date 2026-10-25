@@ -56,3 +56,53 @@ def test_part_without_measures_is_refused():
 def test_timewise_score_is_refused():
     with pytest.raises(ValueError, match="score-partwise"):
         split_for_violy(b"<score-timewise/>")
+
+
+def _tempi(blob):
+    root = _parse(blob)
+    return [(m.get("number"), s.get("tempo")) for m in root.iter("measure")
+            for s in m.iter("sound") if s.get("tempo")]
+
+
+def test_tempo_is_written_into_every_part():
+    files = split_for_violy(SAMPLE_MUSICXML.read_bytes(), tempo=72)
+    for blob in files.values():
+        assert _tempi(blob) == [("1", "72")]
+        root = _parse(blob)
+        first = root.find("part/measure")
+        tags = [c.tag for c in first]
+        # after the opening <attributes>, before the first note
+        assert tags.index("direction") < tags.index("note")
+        assert root.findtext(".//metronome/per-minute") == "72"
+
+
+def test_score_tempo_is_copied_to_parts_without_one():
+    root = _parse(SAMPLE_MUSICXML.read_bytes())
+    top = root.find("part/measure")
+    top.insert(1, ET.fromstring(
+        '<direction><direction-type><words>Andante</words></direction-type>'
+        '<staff>1</staff><sound tempo="84"/></direction>'))
+    files = split_for_violy(ET.tostring(root))
+    assert all(_tempi(b) == [("1", "84")] for b in files.values())
+    for name, blob in files.items():
+        tempo_dirs = [d for d in _parse(blob).iter("direction") if d.find("sound") is not None
+                      and d.find("sound").get("tempo")]
+        assert tempo_dirs and all(d.find("staff") is None for d in tempo_dirs) or "-01-" in name
+
+
+def test_given_tempo_replaces_the_score_tempo():
+    root = _parse(SAMPLE_MUSICXML.read_bytes())
+    root.find("part/measure").insert(1, ET.fromstring(
+        '<direction><direction-type><words>Andante</words></direction-type><sound tempo="84"/></direction>'))
+    files = split_for_violy(ET.tostring(root), tempo=60)
+    assert all(_tempi(b) == [("1", "60")] for b in files.values())
+
+
+def test_no_tempo_stays_no_tempo():
+    assert all(_tempi(b) == [] for b in split_for_violy(SAMPLE_MUSICXML.read_bytes()).values())
+
+
+@pytest.mark.parametrize("bpm", [0, 5, 1000])
+def test_silly_tempo_is_refused(bpm):
+    with pytest.raises(ValueError, match="Tempo"):
+        split_for_violy(SAMPLE_MUSICXML.read_bytes(), tempo=bpm)

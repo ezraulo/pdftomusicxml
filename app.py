@@ -8,6 +8,7 @@ app.py - PDF/image to MusicXML with Audiveris, plus a Violy Creator Studio expor
                      format    mxl (default) | musicxml | violy
                      title     violy only, optional: work title written into each part
                      composer  violy only, optional
+                     tempo     violy only, optional: quarter-note BPM written into every part
                      mscz      violy only, "1" (default) or "0": also write .mscz files
 
 A one-movement result comes back as one file; several movements come back as a zip.
@@ -63,7 +64,7 @@ def _zip(files) -> io.BytesIO:
     return buf
 
 
-def _violy_readme(title, composer, excluded, mscz_errors, mscz_written) -> str:
+def _violy_readme(title, composer, tempo, excluded, mscz_errors, mscz_written) -> str:
     lines = [
         "Violy Creator Studio export",
         "===========================",
@@ -77,6 +78,9 @@ def _violy_readme(title, composer, excluded, mscz_errors, mscz_written) -> str:
             title or "Untitled", composer or "(none)"),
         "  Set them yourself: in Violy's form, pick the title, instrument and",
         "  composer from Violy's lists. Typed text alone is ignored.",
+        "* Tempo: %s" % (
+            "%g BPM (quarter note), written into every part." % tempo if tempo else
+            "taken from the score, if it has one. Violy shows 100 BPM when a file has none."),
         "* Violy wants a MusicXML file AND a MuseScore .mscz file for each part.",
     ]
     if mscz_written:
@@ -157,10 +161,17 @@ def convert():
     # Violy export
     title = (request.form.get("title") or "").strip() or None
     composer = (request.form.get("composer") or "").strip() or None
+    tempo_text = (request.form.get("tempo") or "").strip()
+    try:
+        tempo = float(tempo_text) if tempo_text else None
+    except ValueError:
+        return _error(400, "tempo must be a number of beats per minute.")
+    if tempo is not None and not 10 <= tempo <= 400:
+        return _error(400, "tempo must be between 10 and 400 BPM.")
     parts = {}
     for index, (name, blob) in enumerate(movements, start=1):
         try:
-            split = split_for_violy(blob, title=title, composer=composer)
+            split = split_for_violy(blob, title=title, composer=composer, tempo=tempo)
         except (ValueError, KeyError) as e:
             return _error(422, "Could not split %s into Violy parts: %s" % (name, e),
                           kind="violy-split-failed")
@@ -175,7 +186,7 @@ def convert():
     else:
         mscz_files = {}
     files["READ-ME-violy.txt"] = _violy_readme(
-        title, composer, result.excluded_sheets, mscz_errors, bool(mscz_files)).encode("utf-8")
+        title, composer, tempo, result.excluded_sheets, mscz_errors, bool(mscz_files)).encode("utf-8")
     response = send_file(_zip(files), mimetype="application/zip",
                          as_attachment=True, download_name=stem + "-violy.zip")
     response.headers.update(headers)

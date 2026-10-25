@@ -18,7 +18,7 @@ Usage (library):
     # -> {"Beauty_and_the_Beast-01-Violin.musicxml": b"...", ...}
 
 Usage (CLI):
-    python violy_export.py score.musicxml outdir [--title T] [--composer C]
+    python violy_export.py score.musicxml outdir [--title T] [--composer C] [--tempo BPM]
     python violy_export.py score.mxl outdir          # compressed input is fine
 """
 import argparse
@@ -70,8 +70,77 @@ def _text(e):
     return (e.text or "").strip() if e is not None else ""
 
 
-def split_for_violy(data: bytes, title: str = None, composer: str = None):
-    """Return {filename: bytes}, one single-part MusicXML per part, part id P1."""
+def _is_tempo_direction(d: ET.Element) -> bool:
+    s = d.find("sound")
+    return (s is not None and s.get("tempo")) or d.find("./direction-type/metronome") is not None
+
+
+def _tempo_directions(part: ET.Element):
+    """[(measure number, <direction>)] for every tempo marking in a part."""
+    return [(m.get("number"), d) for m in part.findall("measure")
+            for d in m.findall("direction") if _is_tempo_direction(d)]
+
+
+def _strip_tempo(part: ET.Element) -> None:
+    for m in part.findall("measure"):
+        for d in m.findall("direction"):
+            if _is_tempo_direction(d):
+                m.remove(d)
+        for s in m.findall("sound"):          # measure-level <sound tempo=...>
+            s.attrib.pop("tempo", None)
+
+
+def _insert_at_measure_start(measure: ET.Element, elem: ET.Element) -> None:
+    """After any <print>/<attributes> that open the measure, before the music."""
+    i = 0
+    for i, child in enumerate(list(measure)):
+        if child.tag not in ("print", "attributes"):
+            break
+    else:
+        i = len(measure)
+    measure.insert(i, elem)
+
+
+def _metronome_direction(bpm: float) -> ET.Element:
+    shown = ("%g" % bpm)
+    d = ET.Element("direction", {"placement": "above"})
+    dt = ET.SubElement(d, "direction-type")
+    met = ET.SubElement(dt, "metronome")
+    ET.SubElement(met, "beat-unit").text = "quarter"
+    ET.SubElement(met, "per-minute").text = shown
+    ET.SubElement(d, "sound", {"tempo": shown})
+    return d
+
+
+def _apply_tempo(part: ET.Element, bpm=None, score_tempi=()) -> None:
+    """Give a split part a tempo.
+
+    bpm set: replace every tempo marking with one quarter-note tempo at the start.
+    bpm unset: if the part has no tempo of its own, copy the score's tempo markings
+    (MuseScore only writes them into the top part) to the start of the same measures.
+    """
+    measures = {m.get("number"): m for m in part.findall("measure")}
+    if bpm:
+        _strip_tempo(part)
+        _insert_at_measure_start(part.find("measure"), _metronome_direction(bpm))
+    elif score_tempi and not _tempo_directions(part):
+        for number, direction in reversed(score_tempi):
+            if number in measures:
+                d = _deepcopy(direction)
+                d.set("placement", "above")
+                for s in d.findall("staff"):   # staff numbers belong to the source part
+                    d.remove(s)
+                _insert_at_measure_start(measures[number], d)
+
+
+def split_for_violy(data: bytes, title: str = None, composer: str = None, tempo: float = None):
+    """Return {filename: bytes}, one single-part MusicXML per part, part id P1.
+
+    tempo: optional quarter-note BPM written into every part. Without it, tempo
+    markings found in any part are copied to parts that have none.
+    """
+    if tempo is not None and not (10 <= tempo <= 400):
+        raise ValueError("Tempo must be between 10 and 400 BPM.")
     root = ET.fromstring(_read_xml_bytes(data))
     if root.tag != "score-partwise":
         raise ValueError("Only score-partwise MusicXML is supported "
@@ -90,6 +159,8 @@ def split_for_violy(data: bytes, title: str = None, composer: str = None):
     parts = root.findall("part")
     if not parts:
         raise ValueError("No <part> elements found.")
+
+    score_tempi = next((t for t in map(_tempo_directions, parts) if t), [])
 
     out = {}
     for index, part in enumerate(parts, start=1):
@@ -119,7 +190,9 @@ def split_for_violy(data: bytes, title: str = None, composer: str = None):
                 new_root.append(_deepcopy(src))
         pl = ET.SubElement(new_root, "part-list")
         pl.append(_deepcopy(sp))
-        new_root.append(_deepcopy(part))
+        new_part = _deepcopy(part)
+        _apply_tempo(new_part, tempo, score_tempi)
+        new_root.append(new_part)
 
         # Violy needs the part to be called P1.
         if pid != VIOLY_PART_ID:
@@ -150,10 +223,11 @@ def main(argv=None):
     ap.add_argument("outdir")
     ap.add_argument("--title")
     ap.add_argument("--composer")
+    ap.add_argument("--tempo", type=float, help="quarter-note BPM for every part")
     a = ap.parse_args(argv)
     import os
     os.makedirs(a.outdir, exist_ok=True)
-    files = split_for_violy(open(a.input, "rb").read(), a.title, a.composer)
+    files = split_for_violy(open(a.input, "rb").read(), a.title, a.composer, a.tempo)
     for name, blob in files.items():
         with open(os.path.join(a.outdir, name), "wb") as f:
             f.write(blob)
