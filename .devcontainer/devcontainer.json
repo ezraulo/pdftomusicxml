@@ -1,0 +1,16 @@
+{
+  // GitHub Codespaces: Code > Codespaces > Create codespace on master. The app starts
+  // by itself; open the "Sheet music converter" port (8080) from the Ports tab.
+  "name": "Sheet music converter",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+  },
+  // Audiveris needs about 3 GB of memory; the 2-core machine has 8 GB.
+  "hostRequirements": { "cpus": 2, "memory": "8gb" },
+  "forwardPorts": [8080],
+  "portsAttributes": {
+    "8080": { "label": "Sheet music converter", "onAutoForward": "openBrowser" }
+  },
+  "postStartCommand": "bash .devcontainer/start.sh"
+}

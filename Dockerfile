@@ -22,6 +22,9 @@ COPY mscz/package.json mscz/package-lock.json ./
 RUN npm ci --omit=dev
 
 FROM eclipse-temurin:25-jre-noble AS final
+LABEL org.opencontainers.image.source="https://github.com/ezraulo/pdftomusicxml" \
+      org.opencontainers.image.description="Sheet music converter: PDF, MuseScore, MusicXML, MIDI; practice tempo; Violy export" \
+      org.opencontainers.image.licenses="AGPL-3.0-only"
 RUN apt-get update && apt-get install -y --no-install-recommends \
       tesseract-ocr tesseract-ocr-eng fontconfig fonts-dejavu-core \
       python3 python3-venv curl \
