@@ -1,9 +1,14 @@
-# Local run: docker compose up --build, then open http://localhost:8080
+# Run the app on your computer, then open http://localhost:8080
+#   docker compose pull && docker compose up -d     # use the published image (quick)
+#   docker compose up -d --build                    # or build it yourself (10-15 min)
+#   docker compose down                             # stop it
 services:
   app:
+    image: ghcr.io/ezraulo/pdftomusicxml:latest
     build: .
     ports:
       - "8080:8080"
     environment:
       OMR_TIMEOUT_S: "840"
       MAX_UPLOAD_MB: "40"
+    restart: unless-stopped

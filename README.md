@@ -6,6 +6,77 @@ or a **MusicXML** file, and get it back as **MuseScore (.mscz), MusicXML, MIDI a
 at a slower **practice tempo**. There is also an export for **Violy Creator Studio**,
 which needs one file per part.
 
+## Getting started
+
+The app is a Docker image. Pick whichever way of running it suits you; once it's running,
+open the page, upload a score, and the converted files download.
+
+### A. On your computer (Docker)
+
+Needs [Docker Desktop](https://www.docker.com/products/docker-desktop/) (or Docker
+Engine) running.
+
+```bash
+docker run --rm -p 8080:8080 ghcr.io/ezraulo/pdftomusicxml:latest
+```
+
+Then open <http://localhost:8080>. Stop it with Ctrl+C. The image is published from
+`master` by the *Publish image* workflow; `docker pull ghcr.io/ezraulo/pdftomusicxml:latest`
+fetches a newer one.
+
+Or, from a copy of this repository, with Docker Compose (keeps running in the background):
+
+```bash
+git clone https://github.com/ezraulo/pdftomusicxml.git
+cd pdftomusicxml
+docker compose pull && docker compose up -d     # published image
+docker compose up -d --build                    # or build it yourself (10-15 min)
+docker compose down                             # stop
+```
+
+The published image is for Intel/AMD (x86-64) machines. On an Apple-silicon Mac,
+Docker runs it under emulation, slowly; building it yourself (`--build`) makes a native
+one (not yet tested on arm64).
+
+### B. In GitHub Codespaces (from any browser, including iPad)
+
+A codespace is a cloud computer GitHub runs for you; this repository is set up so the
+app starts in it by itself.
+
+1. On the repository page, choose **Code > Codespaces > Create codespace on master**
+   (the default 2-core machine is enough).
+2. Wait for it to start: it fetches the image and starts the app (a minute or two; if
+   the image can't be fetched it builds it, 10-15 minutes).
+3. Open the **Ports** tab and open **Sheet music converter (8080)**. The address only
+   works for you while you're signed in to GitHub (the port is private by default;
+   keep it that way).
+4. When you're done, stop the codespace (**Codespaces > ... > Stop codespace**) or let
+   it stop itself after 30 idle minutes. Next time, reopen the same codespace: it starts
+   faster.
+
+Personal GitHub accounts include a monthly allowance of free Codespaces use (hours on
+the 2-core machine, plus storage for stopped codespaces); see *Settings > Billing* for
+what's left. Delete codespaces you no longer need, because stored ones count too.
+
+### C. Other hosts
+
+Anything that runs a Docker image works, but reading PDFs with Audiveris needs about
+**3-4 GB of memory**, which most free tiers (often 512 MB) don't offer. Two that fit:
+
+- **Google Cloud Run** (pay per use):
+
+  ```bash
+  gcloud run deploy pdftomusicxml --image ghcr.io/ezraulo/pdftomusicxml:latest \
+    --region europe-west2 --memory 4Gi --cpu 2 --timeout 900 --concurrency 1
+  ```
+
+  Concurrency 1 matches the single worker: each instance converts one score at a time.
+  (Cloud Run may need the image copied to Google's Artifact Registry first.)
+- **Hugging Face Spaces**, free CPU tier (2 vCPU, 16 GB), as a Docker Space.
+
+The app has no login: anyone who can reach its address can use it. Keep a hosted copy
+private, or put it behind the host's own sign-in.
+
 ## Endpoints
 
 | Route | What it does |
@@ -113,25 +184,7 @@ python violy_export.py score.mxl outdir
 
 Always check the notation before uploading: optical music recognition makes mistakes.
 
-## Running
-
-```bash
-docker compose up --build        # then open http://localhost:8080
-```
-
-The first build compiles Audiveris and takes about 10–15 minutes.
-
-### Cloud Run
-
-```bash
-gcloud run deploy pdftomusicxml --source . --region europe-west2 \
-  --memory 4Gi --cpu 2 --timeout 900 --concurrency 1
-```
-
-Concurrency 1 matches the single gunicorn worker: Audiveris is memory-hungry, so each
-container converts one score at a time.
-
-### Configuration (environment variables)
+## Configuration (environment variables)
 
 | Variable | Default | Meaning |
 | -------- | ------- | ------- |
