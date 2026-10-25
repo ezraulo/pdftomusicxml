@@ -48,6 +48,24 @@ jobs:
           curl -sf http://localhost:8080/healthz | tee healthz.json
           grep -q '"audiveris":true' healthz.json
           grep -q '"webmscore":true' healthz.json
+      - name: Audiveris text recognition (OCR) check
+        run: |
+          mkdir -p ocr-out && chmod 777 ocr-out
+          docker run --rm -v "$PWD/docs/examples:/in:ro" -v "$PWD/ocr-out:/out" \
+            pdftomusicxml sh -c 'echo "TESSDATA_PREFIX=$TESSDATA_PREFIX"; ls -la "$TESSDATA_PREFIX";
+              /opt/audiveris/bin/Audiveris -batch -export -output /out -- /in/GeneralUser_Orchestral_Example_FULLSCORE.pdf' \
+            > ocr-log.txt 2>&1 || true
+          echo "== OCR-related log lines =="; grep -iE "ocr|tess|language|text" ocr-log.txt | head -40 || true
+          echo "== log tail =="; tail -40 ocr-log.txt
+          for f in $(find ocr-out -name '*.mxl'); do
+            python3 - "$f" <<'PY'
+          import re, sys, zipfile
+          z = zipfile.ZipFile(sys.argv[1])
+          name = next(n for n in z.namelist() if not n.startswith("META-INF"))
+          xml = z.read(name).decode("utf-8", "replace")
+          print(sys.argv[1], "texts:", re.findall(r"<(?:words|credit-words|part-name|work-title)[^>]*>([^<]*)", xml)[:40])
+          PY
+          done
       - name: Convert the sample PDF for Violy
         run: |
           curl -sS --fail-with-body -o violy.zip -D headers.txt \
@@ -96,6 +114,7 @@ jobs:
         with:
           name: smoke-output-${{ matrix.arch }}
           path: |
+            ocr-log.txt
             violy.zip
             all.zip
             from-mscz.zip

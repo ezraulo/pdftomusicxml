@@ -26,6 +26,7 @@ import os
 import re
 import shlex
 import shutil
+import sys
 import tempfile
 import zipfile
 import xml.etree.ElementTree as ET
@@ -129,11 +130,18 @@ def _read_upload(upload, tmp: Path):
     upload.save(data_path)
     if suffix in OMR_SUFFIXES:
         result = omr.convert_score(data_path, tmp / "out", audiveris_command(), omr_timeout_s())
+        # Show what Audiveris said in the server log (the docker run window), so
+        # problems with a score can be diagnosed.
+        print("--- Audiveris log for %s (last part) ---\n%s\n--- end of Audiveris log ---"
+              % (upload.filename, result.log_tail), file=sys.stderr, flush=True)
         if not result.ok:
             raise ConvertError(422, result.failure.detail, kind=result.failure.kind,
                                log_tail=result.log_tail)
-        movements = [(p.stem + ".musicxml", _read_xml_bytes(p.read_bytes()))
-                     for p in result.movements]
+        movements = []
+        for p in result.movements:
+            xml, notes = omr.tidy_score(_read_xml_bytes(p.read_bytes()))
+            movements.append((p.stem + ".musicxml", xml))
+            result.tidy_notes += ["%s: %s" % (p.stem, n) for n in notes]
         return movements, result, None
     if suffix in MUSESCORE_SUFFIXES:
         if score_tools.command() is None:
@@ -166,7 +174,7 @@ def _score_tempo(name, xml, tempo, slow_by, unmarked_tempo):
                            kind="unsupported-score")
 
 
-def _violy_files(movements, tempo, slow_by, unmarked_tempo, excluded):
+def _violy_files(movements, tempo, slow_by, unmarked_tempo, excluded, tidy_notes=()):
     title = (request.form.get("title") or "").strip() or None
     composer = (request.form.get("composer") or "").strip() or None
     parts = {}
@@ -212,11 +220,11 @@ def _violy_files(movements, tempo, slow_by, unmarked_tempo, excluded):
             "  No .mscz files were made. Open each .musicxml in MuseScore and use",
             "  File > Save As to make one.",
         ]
-    files["READ-ME-violy.txt"] = _readme(lines, mscz_errors, excluded)
+    files["READ-ME-violy.txt"] = _readme(lines, mscz_errors, excluded, tidy_notes)
     return files
 
 
-def _all_files(movements, original, tempo, slow_by, unmarked_tempo, excluded):
+def _all_files(movements, original, tempo, slow_by, unmarked_tempo, excluded, tidy_notes=()):
     files, sources = {}, {}
     for name, xml in movements:
         xml, changed = _score_tempo(name, xml, tempo, slow_by, unmarked_tempo)
@@ -237,11 +245,14 @@ def _all_files(movements, original, tempo, slow_by, unmarked_tempo, excluded):
     if excluded is not None:
         lines += ["* This was read from a scan by optical music recognition, which makes",
                   "  mistakes: compare the .pdf with the original before relying on it."]
-    files["READ-ME.txt"] = _readme(lines, errors, excluded)
+    files["READ-ME.txt"] = _readme(lines, errors, excluded, tidy_notes)
     return files
 
 
-def _readme(lines, errors, excluded) -> bytes:
+def _readme(lines, errors, excluded, tidy_notes=()) -> bytes:
+    if tidy_notes:
+        lines = lines + ["", "Fixed after reading (check these bars against the original):"] + [
+            "* " + n for n in tidy_notes]
     if errors:
         lines = lines + ["", "Problems:"] + ["* " + e for e in errors]
     if excluded:
@@ -277,13 +288,15 @@ def convert():
         with tempfile.TemporaryDirectory(prefix="convert-") as tmp:
             movements, result, original = _read_upload(upload, Path(tmp))
         excluded = result.excluded_sheets if result else None
+        tidy_notes = result.tidy_notes if result else []
 
         if fmt == "violy":
-            files = _violy_files(movements, tempo, slow_by, unmarked_tempo, excluded)
+            files = _violy_files(movements, tempo, slow_by, unmarked_tempo, excluded, tidy_notes)
             response = send_file(_zip(files), mimetype="application/zip",
                                  as_attachment=True, download_name=stem + "-violy.zip")
         elif fmt == "all":
-            files = _all_files(movements, original, tempo, slow_by, unmarked_tempo, excluded)
+            files = _all_files(movements, original, tempo, slow_by, unmarked_tempo, excluded,
+                               tidy_notes)
             response = send_file(_zip(files), mimetype="application/zip",
                                  as_attachment=True, download_name=stem + ".zip")
         else:
