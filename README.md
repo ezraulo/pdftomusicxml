@@ -1,7 +1,7 @@
 # pdftomusicxml
 
 A small web app for practising from sheet music. Upload a **PDF or photo** of a score
-(read by [Audiveris](https://github.com/Audiveris/audiveris) 5.10.2), a **MuseScore** file
+(read by [Audiveris](https://github.com/Audiveris/audiveris) 5.11.0), a **MuseScore** file
 or a **MusicXML** file, and get it back as **MuseScore (.mscz), MusicXML, MIDI and PDF**,
 at a slower **practice tempo**. There is also an export for **Violy Creator Studio**,
 which needs one file per part.

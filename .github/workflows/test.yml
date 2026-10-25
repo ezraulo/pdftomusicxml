@@ -50,6 +50,7 @@ jobs:
           grep -q '"webmscore":true' healthz.json
       - name: Audiveris text recognition (OCR) check
         run: |
+          set -o pipefail
           mkdir -p ocr-out && chmod 777 ocr-out
           docker run --rm -v "$PWD/docs/examples:/in:ro" -v "$PWD/ocr-out:/out" \
             pdftomusicxml sh -c 'echo "TESSDATA_PREFIX=$TESSDATA_PREFIX"; ls -la "$TESSDATA_PREFIX";
@@ -57,13 +58,18 @@ jobs:
             > ocr-log.txt 2>&1 || true
           echo "== OCR-related log lines =="; grep -iE "ocr|tess|language|text" ocr-log.txt | head -40 || true
           echo "== log tail =="; tail -40 ocr-log.txt
+          test -n "$(find ocr-out -name '*.mxl')" || { echo "Audiveris exported nothing"; exit 1; }
           for f in $(find ocr-out -name '*.mxl'); do
             python3 - "$f" <<'PY'
           import re, sys, zipfile
           z = zipfile.ZipFile(sys.argv[1])
           name = next(n for n in z.namelist() if not n.startswith("META-INF"))
           xml = z.read(name).decode("utf-8", "replace")
-          print(sys.argv[1], "texts:", re.findall(r"<(?:words|credit-words|part-name|work-title)[^>]*>([^<]*)", xml)[:40])
+          texts = re.findall(r"<(?:words|credit-words|part-name|work-title)[^>]*>([^<]*)", xml)
+          print(sys.argv[1], "texts:", texts[:40])
+          # Audiveris names parts "Voice"/"Piano" when it reads no text; the sample's
+          # title and instrument names must come through.
+          assert set(texts) - {"Voice", "Piano", ""}, "Audiveris read no text (OCR broken)"
           PY
           done
       - name: Convert the sample PDF for Violy
