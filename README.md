@@ -45,8 +45,9 @@ curl -F file=@song.mscz -F format=violy -F tempo=60 -OJ http://localhost:8080/co
 ## Practice tempo
 
 Practice apps often let you speed a piece up but not slow it down without a paid plan
-(Violy), or don't let you change the tempo at all on the free plan (PlayScore 2). So
-every output starts slower by default:
+(Violy, which does start a piece at the tempo written in the file), or don't let you
+change the tempo at all on the free plan (PlayScore 2). So every output starts slower
+by default:
 
 - The **first tempo** plays at the marked tempo **minus 20 BPM** (never below 20), or at
   **40 BPM** if the score has no tempo. "Force a tempo" sets it to an exact number.
@@ -59,6 +60,11 @@ every output starts slower by default:
 
 A MuseScore file with no visible tempo marking counts as unmarked, even if MuseScore
 plays it at a hidden default tempo.
+
+**PlayScore 2:** the free plan only opens photos taken in the app, so it can't import
+these files. Its own score folders do hold an ordinary MusicXML file (`doc.xml`, read by
+PlayScore's scanner), which can be uploaded here. PlayScore drops printed tempos, so set
+"Force a tempo" for those.
 
 ## Violy Creator Studio export
 
