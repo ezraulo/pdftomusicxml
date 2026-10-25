@@ -2,7 +2,10 @@
   // GitHub Codespaces: Code > Codespaces > Create codespace on main. The app starts
   // by itself; open the "Sheet music converter" port (8080) from the Ports tab.
   "name": "Sheet music converter",
-  "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+  // Pinned: the plain "ubuntu" tag moved to 26.04, where the docker-in-docker
+  // feature cannot install (no moby packages) and the codespace falls back to
+  // recovery mode.
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
   "features": {
     "ghcr.io/devcontainers/features/docker-in-docker:2": {}
   },
