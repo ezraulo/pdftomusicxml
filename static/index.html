@@ -17,10 +17,11 @@
   fieldset { border: 1px solid var(--line); border-radius: 8px; padding: 16px; margin: 0 0 16px; }
   legend { padding: 0 6px; font-weight: 600; }
   label { display: block; margin: 8px 0; }
-  input[type=text], input[type=file] { width: 100%; padding: 8px; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: inherit; font: inherit; }
+  input[type=text], input[type=number], input[type=file] { width: 100%; padding: 8px; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: inherit; font: inherit; }
   .violy { display: none; }
   .violy.on { display: block; }
   .note { color: var(--warn); font-size: .92rem; }
+  .hint { color: var(--muted); font-size: .92rem; margin: 0 0 8px; }
   button { background: var(--accent); color: var(--bg); border: 0; border-radius: 6px; padding: 10px 18px; font: inherit; font-weight: 600; cursor: pointer; }
   button:disabled { opacity: .6; cursor: progress; }
   #status { margin-top: 16px; white-space: pre-wrap; }
@@ -52,11 +53,13 @@
       <div class="violy" id="violy">
         <label>Title <input type="text" name="title" placeholder="Written into every part"></label>
         <label>Composer <input type="text" name="composer" placeholder="Optional"></label>
-        <label>Tempo, quarter-note BPM <input type="number" name="tempo" min="10" max="400" step="1" inputmode="numeric" placeholder="Optional: taken from the score"></label>
+        <label>Practice tempo, quarter-note BPM <input type="number" name="practice_tempo" value="60" min="10" max="400" step="1" inputmode="numeric" placeholder="Empty: keep the score's tempo"></label>
+        <label><input type="checkbox" id="exact"> Use exactly this tempo, even if the score is slower</label>
+        <p class="hint">Violy lets you speed a piece up but not slow it down, so parts start at this tempo
+          (or the score's own, if slower). The score is marked "Practice tempo: 60 BPM (original … BPM)".</p>
         <label><input type="checkbox" name="mscz" value="1" checked> Also make a .mscz for each part</label>
         <p class="note">You still have to set the title, instrument and composer yourself in Violy's form:
-          pick them from Violy's lists, because typed text alone is ignored. Violy hasn't been shown to accept these .mscz files yet.
-          If it refuses one, open the .musicxml in MuseScore and save it as .mscz.</p>
+          pick them from Violy's lists, because typed text alone is ignored.</p>
       </div>
     </fieldset>
 
@@ -82,6 +85,9 @@
     event.preventDefault();
     const data = new FormData(form);
     if (!form.mscz.checked) data.set('mscz', '0');
+    if (document.getElementById('exact').checked && form.practice_tempo.value) {
+      data.set('tempo', form.practice_tempo.value);
+    }
     go.disabled = true;
     status.className = '';
     status.textContent = 'Converting… this can take several minutes.';

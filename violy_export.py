@@ -18,7 +18,8 @@ Usage (library):
     # -> {"Beauty_and_the_Beast-01-Violin.musicxml": b"...", ...}
 
 Usage (CLI):
-    python violy_export.py score.musicxml outdir [--title T] [--composer C] [--tempo BPM]
+    python violy_export.py score.musicxml outdir [--title T] [--composer C]
+                           [--tempo BPM | --practice-tempo BPM]
     python violy_export.py score.mxl outdir          # compressed input is fine
 """
 import argparse
@@ -101,29 +102,73 @@ def _insert_at_measure_start(measure: ET.Element, elem: ET.Element) -> None:
     measure.insert(i, elem)
 
 
-def _metronome_direction(bpm: float) -> ET.Element:
-    shown = ("%g" % bpm)
+def _metronome_direction(bpm: float, text: str = None) -> ET.Element:
+    """A visible tempo marking that also sets the playback tempo: "♩ = bpm", or
+    `text` instead. (MuseScore drops a metronome mark that shares a direction with
+    words, so the two are never combined.)"""
+    shown = "%g" % round(bpm)
     d = ET.Element("direction", {"placement": "above"})
     dt = ET.SubElement(d, "direction-type")
-    met = ET.SubElement(dt, "metronome")
-    ET.SubElement(met, "beat-unit").text = "quarter"
-    ET.SubElement(met, "per-minute").text = shown
+    if text:
+        ET.SubElement(dt, "words", {"font-weight": "bold"}).text = text
+    else:
+        met = ET.SubElement(dt, "metronome")
+        ET.SubElement(met, "beat-unit").text = "quarter"
+        ET.SubElement(met, "per-minute").text = shown
     ET.SubElement(d, "sound", {"tempo": shown})
     return d
 
 
-def _apply_tempo(part: ET.Element, bpm=None, score_tempi=()) -> None:
+def _sounds_with_tempo(part: ET.Element):
+    return [s for s in part.iter("sound") if s.get("tempo")]
+
+
+def _slow_to_practice_tempo(part: ET.Element, cap: float) -> None:
+    """Make the part start at no more than `cap` BPM, because Violy lets players
+    speed a piece up but (without a paid plan) not slow it down.
+
+    The first tempo becomes a visible "Practice tempo: N BPM (original X BPM)" mark;
+    later tempo changes are slowed by the same factor so they stay in proportion.
+    A part that already starts at or below the cap is left alone."""
+    sounds = _sounds_with_tempo(part)
+    original = float(sounds[0].get("tempo")) if sounds else None
+    if original is not None and original <= cap:
+        return
+    factor = cap / original if original else 1.0
+    for s in sounds[1:]:
+        s.set("tempo", "%g" % round(float(s.get("tempo")) * factor, 1))
+    if sounds:
+        # The practice mark replaces the first tempo: drop its playback tempo and any
+        # visible metronome mark, but keep words such as "Allegro".
+        sounds[0].attrib.pop("tempo")
+        for m in part.findall("measure"):
+            for d in m.findall("direction"):
+                if d.find("sound") is sounds[0]:
+                    for dt in d.findall("direction-type"):
+                        if dt.find("metronome") is not None:
+                            d.remove(dt)
+                    if d.find("direction-type") is None:
+                        m.remove(d)
+    text = "Practice tempo: %g BPM" % round(cap)
+    if original:
+        text += " (original %g BPM)" % round(original)
+    _insert_at_measure_start(part.find("measure"), _metronome_direction(cap, text))
+
+
+def _apply_tempo(part: ET.Element, bpm=None, score_tempi=(), practice_tempo=None) -> None:
     """Give a split part a tempo.
 
     bpm set: replace every tempo marking with one quarter-note tempo at the start.
     bpm unset: if the part has no tempo of its own, copy the score's tempo markings
-    (MuseScore only writes them into the top part) to the start of the same measures.
+    (MuseScore only writes them into the top part) to the start of the same measures;
+    then, with practice_tempo set, slow the part down to start at no more than that.
     """
     measures = {m.get("number"): m for m in part.findall("measure")}
     if bpm:
         _strip_tempo(part)
         _insert_at_measure_start(part.find("measure"), _metronome_direction(bpm))
-    elif score_tempi and not _tempo_directions(part):
+        return
+    if score_tempi and not _tempo_directions(part):
         for number, direction in reversed(score_tempi):
             if number in measures:
                 d = _deepcopy(direction)
@@ -131,16 +176,22 @@ def _apply_tempo(part: ET.Element, bpm=None, score_tempi=()) -> None:
                 for s in d.findall("staff"):   # staff numbers belong to the source part
                     d.remove(s)
                 _insert_at_measure_start(measures[number], d)
+    if practice_tempo:
+        _slow_to_practice_tempo(part, practice_tempo)
 
 
-def split_for_violy(data: bytes, title: str = None, composer: str = None, tempo: float = None):
+def split_for_violy(data: bytes, title: str = None, composer: str = None,
+                    tempo: float = None, practice_tempo: float = None):
     """Return {filename: bytes}, one single-part MusicXML per part, part id P1.
 
-    tempo: optional quarter-note BPM written into every part. Without it, tempo
-    markings found in any part are copied to parts that have none.
+    tempo: optional quarter-note BPM written into every part, exactly.
+    practice_tempo: without `tempo`, the most a part may start at; a faster (or
+    missing) tempo is replaced by a marked practice tempo, later changes scaled.
+    Tempo markings found in any part are first copied to parts that have none.
     """
-    if tempo is not None and not (10 <= tempo <= 400):
-        raise ValueError("Tempo must be between 10 and 400 BPM.")
+    for name, value in (("Tempo", tempo), ("Practice tempo", practice_tempo)):
+        if value is not None and not (10 <= value <= 400):
+            raise ValueError("%s must be between 10 and 400 BPM." % name)
     root = ET.fromstring(_read_xml_bytes(data))
     if root.tag != "score-partwise":
         raise ValueError("Only score-partwise MusicXML is supported "
@@ -191,7 +242,7 @@ def split_for_violy(data: bytes, title: str = None, composer: str = None, tempo:
         pl = ET.SubElement(new_root, "part-list")
         pl.append(_deepcopy(sp))
         new_part = _deepcopy(part)
-        _apply_tempo(new_part, tempo, score_tempi)
+        _apply_tempo(new_part, tempo, score_tempi, practice_tempo)
         new_root.append(new_part)
 
         # Violy needs the part to be called P1.
@@ -223,11 +274,14 @@ def main(argv=None):
     ap.add_argument("outdir")
     ap.add_argument("--title")
     ap.add_argument("--composer")
-    ap.add_argument("--tempo", type=float, help="quarter-note BPM for every part")
+    ap.add_argument("--tempo", type=float, help="exact quarter-note BPM for every part")
+    ap.add_argument("--practice-tempo", type=float,
+                    help="start no faster than this BPM (marked as a practice tempo)")
     a = ap.parse_args(argv)
     import os
     os.makedirs(a.outdir, exist_ok=True)
-    files = split_for_violy(open(a.input, "rb").read(), a.title, a.composer, a.tempo)
+    files = split_for_violy(open(a.input, "rb").read(), a.title, a.composer,
+                            a.tempo, a.practice_tempo)
     for name, blob in files.items():
         with open(os.path.join(a.outdir, name), "wb") as f:
             f.write(blob)

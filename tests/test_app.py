@@ -85,7 +85,7 @@ def test_violy_zip_with_mscz(client, monkeypatch):
     assert len(mscz) == 20 and mscz[0] == "Untitled-01-Piccolo.mscz"
     inner = zipfile.ZipFile(io.BytesIO(z.read(mscz[0])))
     assert any(n.endswith(".mscx") for n in inner.namelist())
-    assert "NOT yet confirmed" in z.read("READ-ME-violy.txt").decode()
+    assert "Violy accepts them" in z.read("READ-ME-violy.txt").decode()
 
 
 @pytest.mark.parametrize("kwargs, status, fragment", [
@@ -111,7 +111,22 @@ def test_violy_tempo(client):
     assert "66 BPM" in z.read("READ-ME-violy.txt").decode()
 
 
-@pytest.mark.parametrize("tempo", ["fast", "0", "999"])
-def test_violy_bad_tempo(client, tempo):
-    r = _post(client, format="violy", tempo=tempo)
-    assert r.status_code == 400 and "tempo" in r.get_json()["error"]
+@pytest.mark.parametrize("field", ["tempo", "practice_tempo"])
+@pytest.mark.parametrize("value", ["fast", "0", "999"])
+def test_violy_bad_tempo(client, field, value):
+    r = _post(client, format="violy", **{field: value})
+    assert r.status_code == 400 and field in r.get_json()["error"]
+
+
+def test_violy_defaults_to_practice_tempo_60(client):
+    r = _post(client, format="violy", mscz="0")
+    z = zipfile.ZipFile(io.BytesIO(r.data))
+    root = ET.fromstring(z.read("Untitled-19-Violoncellos.musicxml"))
+    assert [s.get("tempo") for s in root.iter("sound") if s.get("tempo")] == ["60"]
+    assert "practice tempo of at most 60 BPM" in z.read("READ-ME-violy.txt").decode()
+
+
+def test_violy_empty_practice_tempo_keeps_score_tempo(client):
+    r = _post(client, format="violy", mscz="0", practice_tempo="")
+    root = ET.fromstring(zipfile.ZipFile(io.BytesIO(r.data)).read("Untitled-19-Violoncellos.musicxml"))
+    assert not [s for s in root.iter("sound") if s.get("tempo")]

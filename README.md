@@ -19,7 +19,8 @@ There is also an export for **Violy Creator Studio**, which needs one file per p
 | `file` | PDF, PNG, JPG or TIFF (default limit 40 MB) |
 | `format` | `mxl` (default), `musicxml` (uncompressed) or `violy` |
 | `title`, `composer` | `violy` only, optional: written into every part |
-| `tempo` | `violy` only, optional: quarter-note BPM written into every part |
+| `practice_tempo` | `violy` only: start no faster than this quarter-note BPM (default `60`; empty keeps the score's tempo) |
+| `tempo` | `violy` only, optional: exact BPM for every part (wins over `practice_tempo`) |
 | `mscz` | `violy` only: `1` (default) also writes a `.mscz` per part, `0` skips it |
 
 - A one-movement score comes back as a single file. Audiveris sometimes splits a score
@@ -51,15 +52,20 @@ testing (October 2026), not from Violy's documentation:
   typed text alone is ignored.
 - **A `.mscz` per part** is also required. The zip includes one, written by
   [webmscore](https://github.com/LibreScore/webmscore) (MuseScore 4 compiled to
-  WebAssembly). **It has not yet been confirmed that Violy accepts these files.** If it
-  refuses them, open the `.musicxml` in MuseScore and use *File > Save As*.
-- **Tempo:** Creator Studio has no tempo field, and the app shows 100 BPM for a file with
-  no tempo. Enter a tempo to write it into every part. Without one, tempo markings in the
-  score are copied to every part (MuseScore and Audiveris put them only in the top part,
-  so split parts would otherwise lose them). Whether Violy uses a file's tempo as the
-  piece's starting tempo hasn't been confirmed yet.
+  WebAssembly). Violy accepts them (tested October 2026).
+- **Tempo:** Creator Studio has no tempo field. In the app, players can speed a piece up
+  but (without a paid plan) not slow it down, and a file with no tempo shows 100 BPM.
+  So the Violy export starts every part at a **practice tempo of at most 60 BPM** by
+  default, marked on the score as "Practice tempo: 60 BPM (original 120 BPM)". A score
+  that's already slower keeps its own tempo, and later tempo changes are slowed by the
+  same proportion. Change the number in the form, clear it to keep the score's tempo,
+  or tick "use exactly this tempo".
 - Violy plays each uploaded part on its own (the main part or the accompaniment, not
-  both together), and it shows a two-staff piano part as a single staff.
+  both together). A three-staff part (two instruments in one part) shows up but plays
+  no notes, so parts can't be combined that way.
+- The `.mscz` is required, but Violy doesn't appear to use its content: any `.mscz`
+  is accepted, and the notation and sound come from the MusicXML. The export still
+  makes a matching one per part.
 - There is no MIDI upload field. "Add accompaniment" is a second block with the same
   fields.
 
@@ -73,7 +79,7 @@ click *Preview*. Good files show notation; bad ones show a blank dialog.
 The splitter also works on its own, with no Audiveris (standard library only):
 
 ```bash
-python violy_export.py score.musicxml outdir --title "My Piece" --composer "Someone" --tempo 72
+python violy_export.py score.musicxml outdir --title "My Piece" --composer "Someone" --practice-tempo 60
 python violy_export.py score.mxl outdir
 ```
 
