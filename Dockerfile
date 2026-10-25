@@ -1,9 +1,9 @@
-# pdftomusicxml: Audiveris (PDF/image -> MusicXML) behind a small Flask app,
-# plus a Violy Creator Studio export (one MusicXML + one .mscz per part).
+# pdftomusicxml: convert sheet music between PDF, MuseScore, MusicXML and MIDI behind a
+# small Flask app, with a practice-tempo option and a Violy Creator Studio export.
 #
-# Stage 1 builds Audiveris (AGPL-3.0) from its release tag.
-# Stage 2 installs webmscore (MuseScore compiled to WebAssembly, GPL-3.0),
-#   used only to write the optional .mscz files for the Violy export.
+# Stage 1 builds Audiveris (AGPL-3.0) from its release tag: it reads PDFs and images.
+# Stage 2 installs webmscore (MuseScore compiled to WebAssembly, GPL-3.0): it reads
+#   .mscz and writes .mscz, MusicXML, MIDI and PDF.
 # Stage 3 is the runtime: JRE + Tesseract + Python (Flask) + Node.
 
 # Audiveris 5.10.x declares Java 25 as its minimum; a 21 JDK fails compileJava.
@@ -30,17 +30,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=audiveris-build /build/app/build/install/app /opt/audiveris
 COPY --from=mscz-build /usr/local/bin/node /usr/local/bin/node
 COPY --from=mscz-build /opt/mscz /opt/mscz
-COPY mscz/to_mscz.cjs /opt/mscz/
+COPY mscz/convert.cjs /opt/mscz/
 
 WORKDIR /app
 COPY requirements.txt ./
 RUN python3 -m venv /opt/venv && /opt/venv/bin/pip install --no-cache-dir -r requirements.txt
-COPY app.py omr.py violy_export.py mscz_export.py ./
+COPY app.py omr.py violy_export.py score_tools.py ./
 COPY static ./static
 
 ENV PATH=/opt/venv/bin:$PATH \
     AUDIVERIS_CMD=/opt/audiveris/bin/Audiveris \
-    MSCZ_CMD="node /opt/mscz/to_mscz.cjs" \
+    WEBMSCORE_CMD="node /opt/mscz/convert.cjs" \
     TESSDATA_PREFIX=/usr/share/tesseract-ocr/5/tessdata \
     JAVA_OPTS="-Djava.awt.headless=true -Xmx3g" \
     PORT=8080

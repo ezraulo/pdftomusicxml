@@ -18,7 +18,8 @@ the optical music recognition engine, unmodified, from the release tag in the
 
 The Docker image installs [webmscore](https://github.com/LibreScore/webmscore) 1.2.1 from
 npm (MuseScore compiled to WebAssembly, GPL-3.0 with MuseScore's font exception).
-`mscz/to_mscz.cjs` runs it in a separate Node process to write `.mscz` files. GPL-3.0
+`mscz/convert.cjs` runs it in a separate Node process to read `.mscz` files and write
+`.mscz`, MusicXML, MIDI and PDF. GPL-3.0
 §13 allows combining GPL-3.0 code with AGPL-3.0 code.
 
 ### Tesseract OCR (Apache-2.0)

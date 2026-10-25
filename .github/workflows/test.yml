@@ -39,7 +39,7 @@ jobs:
           for i in $(seq 1 30); do curl -sf http://localhost:8080/healthz && break; sleep 2; done
           curl -sf http://localhost:8080/healthz | tee healthz.json
           grep -q '"audiveris":true' healthz.json
-          grep -q '"mscz":true' healthz.json
+          grep -q '"webmscore":true' healthz.json
       - name: Convert the sample PDF for Violy
         run: |
           curl -sS --fail-with-body -o violy.zip -D headers.txt \
@@ -61,6 +61,25 @@ jobs:
               assert root.find("part").findall("measure"), n
           print("OK:", len(parts), "parts with .mscz")
           PY
+      - name: Convert the sample PDF to all formats
+        run: |
+          curl -sS --fail-with-body -o all.zip \
+            -F "file=@docs/examples/GeneralUser_Orchestral_Example_FULLSCORE.pdf" \
+            http://localhost:8080/convert
+          unzip -l all.zip
+          for ext in mscz musicxml mid pdf; do
+            unzip -l all.zip | grep -q "FULLSCORE\.$ext\$" || { echo "missing .$ext"; exit 1; }
+          done
+          if unzip -p all.zip READ-ME.txt | grep -q "Problems"; then
+            unzip -p all.zip READ-ME.txt; exit 1
+          fi
+      - name: Convert the sample MuseScore file to all formats
+        run: |
+          curl -sS --fail-with-body -o from-mscz.zip \
+            -F "file=@docs/examples/GeneralUser Orchestral Example.mscz" \
+            http://localhost:8080/convert
+          unzip -l from-mscz.zip
+          unzip -l from-mscz.zip | grep -q "Example\.pdf$"
       - name: Container log
         if: always()
         run: docker logs app 2>&1 | tail -200
@@ -70,5 +89,7 @@ jobs:
           name: smoke-output
           path: |
             violy.zip
+            all.zip
+            from-mscz.zip
             headers.txt
           if-no-files-found: ignore

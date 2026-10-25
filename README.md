@@ -1,41 +1,64 @@
 # pdftomusicxml
 
-Upload sheet music as a PDF or image and get MusicXML back. The conversion is done by
-[Audiveris](https://github.com/Audiveris/audiveris) 5.10.2 behind a small Flask app.
-There is also an export for **Violy Creator Studio**, which needs one file per part.
+A small web app for practising from sheet music. Upload a **PDF or photo** of a score
+(read by [Audiveris](https://github.com/Audiveris/audiveris) 5.10.2), a **MuseScore** file
+or a **MusicXML** file, and get it back as **MuseScore (.mscz), MusicXML, MIDI and PDF**,
+at a slower **practice tempo**. There is also an export for **Violy Creator Studio**,
+which needs one file per part.
 
 ## Endpoints
 
 | Route | What it does |
 | ----- | ------------ |
 | `GET /` | Upload page |
-| `GET /healthz` | `{"status": "ok", "audiveris": true, "mscz": true}` |
+| `GET /healthz` | `{"status": "ok", "audiveris": true, "webmscore": true}` |
 | `POST /convert` | Multipart form, described below |
 
 `POST /convert` fields:
 
 | Field | Values |
 | ----- | ------ |
-| `file` | PDF, PNG, JPG or TIFF (default limit 40 MB) |
-| `format` | `mxl` (default), `musicxml` (uncompressed) or `violy` |
+| `file` | PDF, PNG, JPG or TIFF (read by Audiveris); `.mscz`/`.mscx`; `.musicxml`/`.xml`/`.mxl` (default limit 40 MB) |
+| `format` | `all` (default): zip of `.mscz`, `.musicxml`, `.mid`, `.pdf` · `musicxml` · `mxl` · `violy` |
+| `slow_by` | play the first marked tempo this many BPM slower (default `20`) |
+| `default_tempo` | tempo when the score has none (default `40`) |
+| `tempo` | optional: force the first tempo to this BPM (wins over both above) |
 | `title`, `composer` | `violy` only, optional: written into every part |
-| `slow_by` | `violy` only: lower marked tempos by this many BPM (default `20`) |
-| `default_tempo` | `violy` only: tempo when the score has none (default `40`) |
-| `tempo` | `violy` only, optional: force this BPM for the piece (wins over both above) |
 | `mscz` | `violy` only: `1` (default) also writes a `.mscz` per part, `0` skips it |
 
-- A one-movement score comes back as a single file. Audiveris sometimes splits a score
-  into several movements at a page break it can't bridge; you then get a zip with all of
-  them.
+- `all` and `violy` always return a zip with a READ-ME. `musicxml` and `mxl` return one
+  file, or a zip when Audiveris split the score into several movements at a page break
+  it couldn't bridge.
+- The `.pdf` is engraved by MuseScore from what was read, so for a scan it shows what
+  Audiveris understood: compare it with the original.
 - If Audiveris can't read some pages, it retries without them. The missing page numbers
-  are in the `X-Excluded-Sheets` response header (and the Violy read-me).
+  are in the `X-Excluded-Sheets` response header and the READ-ME.
 - Failures return JSON `{"error", "kind", "log_tail"}` with HTTP 422. `kind` is one of
   `rhythm-analysis-abort` (retrying won't help), `unreadable-input`, `timeout`,
-  `omr-failed` or `violy-split-failed`.
+  `omr-failed`, `unsupported-score` or `violy-split-failed`.
 
 ```bash
-curl -F file=@score.pdf -F format=musicxml -OJ http://localhost:8080/convert
+curl -F file=@score.pdf -OJ http://localhost:8080/convert                     # all formats
+curl -F file=@song.mscz -F format=violy -F tempo=60 -OJ http://localhost:8080/convert
 ```
+
+## Practice tempo
+
+Practice apps often let you speed a piece up but not slow it down without a paid plan
+(Violy), or don't let you change the tempo at all on the free plan (PlayScore 2). So
+every output starts slower by default:
+
+- The **first tempo** plays at the marked tempo **minus 20 BPM** (never below 20), or at
+  **40 BPM** if the score has no tempo. "Force a tempo" sets it to an exact number.
+- **Every original marking stays** on the score, and later tempo changes are left as
+  written. A label goes above the first marking: "Practice tempo: 100 BPM (original
+  120 BPM)", or "Practice tempo: 40 BPM" for an unmarked score.
+- Tempos are counted in quarter notes, as MusicXML does (a dotted-quarter = 60 in 6/8 is
+  90 quarter beats).
+- Tick "Keep the score's own tempo" (or send `slow_by=0`, `default_tempo=`) to leave it.
+
+A MuseScore file with no visible tempo marking counts as unmarked, even if MuseScore
+plays it at a hidden default tempo.
 
 ## Violy Creator Studio export
 
@@ -54,13 +77,9 @@ testing (October 2026), not from Violy's documentation:
 - **A `.mscz` per part** is also required. The zip includes one, written by
   [webmscore](https://github.com/LibreScore/webmscore) (MuseScore 4 compiled to
   WebAssembly). Violy accepts them (tested October 2026).
-- **Tempo:** Creator Studio has no tempo field. In the app, players can speed a piece up
-  but (without a paid plan) not slow it down, and a file with no tempo starts at 100 BPM.
-  So the Violy export starts every part at a **practice tempo**: the marked tempo
-  **minus 20 BPM** (never below 20), or **40 BPM** if the score has no tempo. It's marked
-  at the top, e.g. "Practice tempo: 100 BPM (original 120 BPM)". Tempo words such as
-  "Allegro" are kept, and later tempo changes are also lowered by 20. Both numbers can
-  be changed in the form, and "Force a tempo for this piece" overrides them.
+- **Tempo:** Creator Studio has no tempo field, and in the app players can speed a piece
+  up but not slow it down (a file with no tempo starts at 100 BPM). The practice tempo
+  (above) is copied into every part, because MuseScore and Audiveris only mark the top one.
 - Violy plays one part at a time: a toggle chooses which uploaded part (the main part
   or the accompaniment) plays, each as its own instrument; they don't play together.
 - A part with three staves (two instruments combined in one part) doesn't render in
@@ -79,7 +98,7 @@ key without mode, bass clef, ties, two-staff piano part.
 **Check a file without submitting:** in Violy's Create Music form, attach a MusicXML and
 click *Preview*. Good files show notation; bad ones show a blank dialog.
 
-The splitter also works on its own, with no Audiveris (standard library only):
+The splitter also works on its own, without the app (standard library only):
 
 ```bash
 python violy_export.py score.musicxml outdir --title "My Piece" --composer "Someone" --slow-by 20 --unmarked-tempo 40
@@ -114,27 +133,28 @@ container converts one score at a time.
 | `AUDIVERIS_CMD` | `/opt/audiveris/bin/Audiveris` | |
 | `OMR_TIMEOUT_S` | `840` | Seconds before an Audiveris run is killed |
 | `MAX_UPLOAD_MB` | `40` | |
-| `MSCZ_CMD` | `node /opt/mscz/to_mscz.cjs` in the image | Unset means no `.mscz` files |
+| `WEBMSCORE_CMD` | `node /opt/mscz/convert.cjs` in the image | Unset means no `.mscz`, MIDI or PDF output and no `.mscz` input |
 
 ## Development
 
 ```bash
 python -m venv .venv && . .venv/bin/activate
 pip install -r requirements-dev.txt
-npm ci --prefix mscz            # optional: enables the .mscz test
+npm ci --prefix mscz            # optional: enables the webmscore tests
 python -m pytest tests
 ```
 
 The tests use a stand-in for Audiveris (`tests/fake_audiveris.py`) and the sample score in
 `docs/examples/`, so they need no Java. The **Docker smoke test** in GitHub Actions
-builds the real image and converts `docs/examples/...FULLSCORE.pdf` with real Audiveris.
+builds the real image and converts the sample PDF (with real Audiveris) and the sample
+`.mscz` to all formats and to Violy parts.
 
 | File | Role |
 | ---- | ---- |
 | `app.py` | Flask app |
 | `omr.py` | Runs Audiveris: movements, retry without broken pages, failure kinds |
-| `violy_export.py` | Splits a score into Violy-ready single-part files |
-| `mscz_export.py`, `mscz/to_mscz.cjs` | `.mscz` writing via webmscore in Node |
+| `violy_export.py` | Splits a score into Violy-ready single-part files; the practice-tempo rule |
+| `score_tools.py`, `mscz/convert.cjs` | `.mscz`/MusicXML/MIDI/PDF conversion via webmscore in Node |
 
 ## Licence
 

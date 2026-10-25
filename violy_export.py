@@ -8,8 +8,10 @@ What Violy's upload form needs (found by testing, Oct 2026):
   * real notes in the file (empty-part exports are rejected);
   * a work title and, ideally, a composer (the form fills them from the file);
   * uncompressed .musicxml / .xml (not .mxl).
-Violy ALSO wants a MuseScore .mscz per part. That cannot be produced from
-MusicXML without MuseScore itself, so it is out of scope here.
+Violy ALSO wants a MuseScore .mscz per part; the app writes those with webmscore.
+Violy lets players speed a piece up but not slow it down, so the first tempo can be
+set to a slower, labelled practice tempo (set_score_tempo() does the same for a
+whole score).
 
 Usage (library):
     from violy_export import split_for_violy
@@ -83,15 +85,6 @@ def _tempo_directions(part: ET.Element):
             for d in m.findall("direction") if _is_tempo_direction(d)]
 
 
-def _strip_tempo(part: ET.Element) -> None:
-    for m in part.findall("measure"):
-        for d in m.findall("direction"):
-            if _is_tempo_direction(d):
-                m.remove(d)
-        for s in m.findall("sound"):          # measure-level <sound tempo=...>
-            s.attrib.pop("tempo", None)
-
-
 def _insert_at_measure_start(measure: ET.Element, elem: ET.Element) -> None:
     """After any <print>/<attributes> that open the measure, before the music."""
     i = 0
@@ -103,76 +96,73 @@ def _insert_at_measure_start(measure: ET.Element, elem: ET.Element) -> None:
     measure.insert(i, elem)
 
 
-def _metronome_direction(bpm: float, text: str = None) -> ET.Element:
-    """A visible tempo marking that also sets the playback tempo: "♩ = bpm", or
-    `text` instead. (MuseScore drops a metronome mark that shares a direction with
-    words, so the two are never combined.)"""
-    shown = "%g" % round(bpm)
+def _words_direction(text: str, bpm: float = None) -> ET.Element:
+    """A bold text marking, optionally also setting the playback tempo. (A metronome
+    mark is never added next to the words: MuseScore drops one that shares a
+    direction with words.)"""
     d = ET.Element("direction", {"placement": "above"})
-    dt = ET.SubElement(d, "direction-type")
-    if text:
-        ET.SubElement(dt, "words", {"font-weight": "bold"}).text = text
-    else:
-        met = ET.SubElement(dt, "metronome")
-        ET.SubElement(met, "beat-unit").text = "quarter"
-        ET.SubElement(met, "per-minute").text = shown
-    ET.SubElement(d, "sound", {"tempo": shown})
+    ET.SubElement(ET.SubElement(d, "direction-type"), "words", {"font-weight": "bold"}).text = text
+    if bpm:
+        ET.SubElement(d, "sound", {"tempo": "%g" % round(bpm)})
     return d
 
 
-def _sounds_with_tempo(part: ET.Element):
-    return [s for s in part.iter("sound") if s.get("tempo")]
+def _tempo_sounds(part: ET.Element):
+    """[(measure index, measure, <sound>)] for every playback tempo in a part."""
+    return [(i, m, s) for i, m in enumerate(part.findall("measure"))
+            for s in m.iter("sound") if s.get("tempo")]
 
 
-def _slow_to_practice_tempo(part: ET.Element, slow_by, unmarked_tempo) -> None:
-    """Start the part at a slower practice tempo, because Violy lets players speed a
-    piece up but (without a paid plan) not slow it down.
+def _set_first_tempo(parts, tempo=None, slow_by=None, unmarked_tempo=None) -> bool:
+    """Give the score a slower practice tempo, because practice apps such as Violy let
+    players speed a piece up but (without a paid plan) not slow it down.
 
-    Marked tempos are lowered by `slow_by` BPM (never below MIN_PRACTICE_TEMPO); the
-    first becomes a visible "Practice tempo: 100 BPM (original 120 BPM)" mark. A part
-    with no tempo gets `unmarked_tempo`, marked "Practice tempo: 40 BPM"."""
-    sounds = _sounds_with_tempo(part)
-    if not sounds:
-        if unmarked_tempo:
-            _insert_at_measure_start(part.find("measure"), _metronome_direction(
-                unmarked_tempo, "Practice tempo: %g BPM" % round(unmarked_tempo)))
-        return
-    if not slow_by:
-        return
-    original = float(sounds[0].get("tempo"))
-    slower = lambda bpm: max(MIN_PRACTICE_TEMPO, round(bpm - slow_by))
-    for s in sounds[1:]:
-        s.set("tempo", "%g" % slower(float(s.get("tempo"))))
-    # The practice mark replaces the first tempo: drop its playback tempo and any
-    # visible metronome mark, but keep words such as "Allegro".
-    sounds[0].attrib.pop("tempo")
-    for m in part.findall("measure"):
-        for d in m.findall("direction"):
-            if d.find("sound") is sounds[0]:
-                for dt in d.findall("direction-type"):
-                    if dt.find("metronome") is not None:
-                        d.remove(dt)
-                if d.find("direction-type") is None:
-                    m.remove(d)
-    practice = slower(original)
-    _insert_at_measure_start(part.find("measure"), _metronome_direction(
-        practice, "Practice tempo: %g BPM (original %g BPM)" % (practice, round(original))))
+    Only the FIRST tempo changes; every original marking stays on the page, and
+    later tempo changes are left as written. The first tempo plays at `tempo` if
+    given, else `slow_by` BPM slower (never below MIN_PRACTICE_TEMPO), and a label
+    "Practice tempo: 100 BPM (original 120 BPM)" goes above it in the top part. A
+    score with no tempo gets `tempo` or `unmarked_tempo`, labelled "Practice tempo:
+    40 BPM". Returns whether anything changed."""
+    found = [(i, n, m, s) for n, p in enumerate(parts) for i, m, s in _tempo_sounds(p)]
+    if not found:
+        target = tempo or unmarked_tempo
+        if not target:
+            return False
+        _insert_at_measure_start(parts[0].find("measure"), _words_direction(
+            "Practice tempo: %g BPM" % round(target), target))
+        return True
+    first_index = min(i for i, _, _, _ in found)
+    original = float(next(s for i, _, _, s in sorted(found, key=lambda f: f[:2])
+                          if i == first_index).get("tempo"))
+    if tempo:
+        target = round(tempo)
+    elif slow_by:
+        target = max(MIN_PRACTICE_TEMPO, round(original - slow_by))
+    else:
+        return False
+    if target == round(original):
+        return False
+    # The same first tempo may be repeated in several parts; change every copy.
+    for i, _, _, s in found:
+        if i == first_index and float(s.get("tempo")) == original:
+            s.set("tempo", "%g" % target)
+    label = _words_direction("Practice tempo: %g BPM (original %g BPM)" % (target, round(original)))
+    measure = parts[0].findall("measure")[first_index]
+    tempo_direction = next((d for d in measure.findall("direction")
+                            if d.find("sound") is not None and d.find("sound").get("tempo")), None)
+    if tempo_direction is not None:
+        measure.insert(list(measure).index(tempo_direction), label)
+    else:
+        _insert_at_measure_start(measure, label)
+    return True
 
 
-def _apply_tempo(part: ET.Element, bpm=None, score_tempi=(), slow_by=None,
-                 unmarked_tempo=None) -> None:
-    """Give a split part a tempo.
-
-    bpm set: replace every tempo marking with one quarter-note tempo at the start.
-    bpm unset: if the part has no tempo of its own, copy the score's tempo markings
-    (MuseScore only writes them into the top part) to the start of the same measures;
-    then slow the part down to a practice tempo (see _slow_to_practice_tempo).
-    """
+def _apply_tempo(part: ET.Element, score_tempi=(), tempo=None, slow_by=None,
+                 unmarked_tempo=None) -> bool:
+    """Give a split part its tempo: if the part has no tempo of its own, copy the
+    score's tempo markings (MuseScore only writes them into the top part) to the start
+    of the same measures, then set the practice tempo (see _set_first_tempo)."""
     measures = {m.get("number"): m for m in part.findall("measure")}
-    if bpm:
-        _strip_tempo(part)
-        _insert_at_measure_start(part.find("measure"), _metronome_direction(bpm))
-        return
     if score_tempi and not _tempo_directions(part):
         for number, direction in reversed(score_tempi):
             if number in measures:
@@ -181,7 +171,32 @@ def _apply_tempo(part: ET.Element, bpm=None, score_tempi=(), slow_by=None,
                 for s in d.findall("staff"):   # staff numbers belong to the source part
                     d.remove(s)
                 _insert_at_measure_start(measures[number], d)
-    _slow_to_practice_tempo(part, slow_by, unmarked_tempo)
+    return _set_first_tempo([part], tempo, slow_by, unmarked_tempo)
+
+
+def _check_tempo_args(tempo, slow_by, unmarked_tempo):
+    for name, value, low in (("Tempo", tempo, 10), ("Default tempo", unmarked_tempo, 10),
+                             ("Slow-down", slow_by, 0)):
+        if value is not None and not (low <= value <= 400):
+            raise ValueError("%s must be between %d and 400 BPM." % (name, low))
+
+
+def set_score_tempo(data: bytes, tempo: float = None, slow_by: float = None,
+                    unmarked_tempo: float = None):
+    """Apply the practice-tempo rule (see _set_first_tempo) to a whole score: only the
+    first tempo changes, and the label goes in the top part. Returns (MusicXML bytes,
+    changed); the bytes are re-serialised only when something changed."""
+    _check_tempo_args(tempo, slow_by, unmarked_tempo)
+    xml = _read_xml_bytes(data)
+    root = ET.fromstring(xml)
+    if root.tag != "score-partwise":
+        raise ValueError("Only score-partwise MusicXML is supported "
+                         "(root element was <%s>)." % root.tag)
+    parts = root.findall("part")
+    if not parts:
+        raise ValueError("No <part> elements found.")
+    changed = _set_first_tempo(parts, tempo, slow_by, unmarked_tempo)
+    return (_serialise(root) if changed else xml), changed
 
 
 def split_for_violy(data: bytes, title: str = None, composer: str = None,
@@ -190,14 +205,13 @@ def split_for_violy(data: bytes, title: str = None, composer: str = None,
 
     Tempos are quarter-note BPM. Tempo markings found in any part are first copied
     to parts that have none (MuseScore and Audiveris only mark the top part).
-    tempo: force this exact tempo on every part (overrides the other two).
-    slow_by: lower every marked tempo by this much, as a marked practice tempo.
+    Then only the first tempo is changed (see _set_first_tempo); every original
+    marking stays.
+    tempo: play the first tempo at exactly this (overrides the other two).
+    slow_by: play the first tempo this much slower than marked.
     unmarked_tempo: practice tempo for a part with no tempo marking.
     """
-    for name, value, low in (("Tempo", tempo, 10), ("Default tempo", unmarked_tempo, 10),
-                             ("Slow-down", slow_by, 0)):
-        if value is not None and not (low <= value <= 400):
-            raise ValueError("%s must be between %d and 400 BPM." % (name, low))
+    _check_tempo_args(tempo, slow_by, unmarked_tempo)
     root = ET.fromstring(_read_xml_bytes(data))
     if root.tag != "score-partwise":
         raise ValueError("Only score-partwise MusicXML is supported "
@@ -248,7 +262,7 @@ def split_for_violy(data: bytes, title: str = None, composer: str = None,
         pl = ET.SubElement(new_root, "part-list")
         pl.append(_deepcopy(sp))
         new_part = _deepcopy(part)
-        _apply_tempo(new_part, tempo, score_tempi, slow_by, unmarked_tempo)
+        _apply_tempo(new_part, score_tempi, tempo, slow_by, unmarked_tempo)
         new_root.append(new_part)
 
         # Violy needs the part to be called P1.
@@ -280,9 +294,9 @@ def main(argv=None):
     ap.add_argument("outdir")
     ap.add_argument("--title")
     ap.add_argument("--composer")
-    ap.add_argument("--tempo", type=float, help="exact quarter-note BPM for every part")
+    ap.add_argument("--tempo", type=float, help="play the first tempo at exactly this quarter-note BPM")
     ap.add_argument("--slow-by", type=float,
-                    help="lower every marked tempo by this many BPM (practice tempo)")
+                    help="play the first tempo this many BPM slower (practice tempo)")
     ap.add_argument("--unmarked-tempo", type=float,
                     help="practice tempo for parts with no tempo marking")
     a = ap.parse_args(argv)

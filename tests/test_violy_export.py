@@ -3,7 +3,7 @@ import xml.etree.ElementTree as ET
 import pytest
 
 from conftest import SAMPLE_MUSICXML, SAMPLE_MXL
-from violy_export import split_for_violy
+from violy_export import _insert_at_measure_start, set_score_tempo, split_for_violy
 
 
 def _parse(blob):
@@ -58,60 +58,11 @@ def test_timewise_score_is_refused():
         split_for_violy(b"<score-timewise/>")
 
 
-def _tempi(blob):
-    root = _parse(blob)
-    return [(m.get("number"), s.get("tempo")) for m in root.iter("measure")
-            for s in m.iter("sound") if s.get("tempo")]
-
-
-def test_tempo_is_written_into_every_part():
-    files = split_for_violy(SAMPLE_MUSICXML.read_bytes(), tempo=72)
-    for blob in files.values():
-        assert _tempi(blob) == [("1", "72")]
-        root = _parse(blob)
-        first = root.find("part/measure")
-        tags = [c.tag for c in first]
-        # after the opening <attributes>, before the first note
-        assert tags.index("direction") < tags.index("note")
-        assert root.findtext(".//metronome/per-minute") == "72"
-
-
-def test_score_tempo_is_copied_to_parts_without_one():
-    root = _parse(SAMPLE_MUSICXML.read_bytes())
-    top = root.find("part/measure")
-    top.insert(1, ET.fromstring(
-        '<direction><direction-type><words>Andante</words></direction-type>'
-        '<staff>1</staff><sound tempo="84"/></direction>'))
-    files = split_for_violy(ET.tostring(root))
-    assert all(_tempi(b) == [("1", "84")] for b in files.values())
-    for name, blob in files.items():
-        tempo_dirs = [d for d in _parse(blob).iter("direction") if d.find("sound") is not None
-                      and d.find("sound").get("tempo")]
-        assert tempo_dirs and all(d.find("staff") is None for d in tempo_dirs) or "-01-" in name
-
-
-def test_given_tempo_replaces_the_score_tempo():
-    root = _parse(SAMPLE_MUSICXML.read_bytes())
-    root.find("part/measure").insert(1, ET.fromstring(
-        '<direction><direction-type><words>Andante</words></direction-type><sound tempo="84"/></direction>'))
-    files = split_for_violy(ET.tostring(root), tempo=60)
-    assert all(_tempi(b) == [("1", "60")] for b in files.values())
-
-
-def test_no_tempo_stays_no_tempo():
-    assert all(_tempi(b) == [] for b in split_for_violy(SAMPLE_MUSICXML.read_bytes()).values())
-
-
-@pytest.mark.parametrize("bpm", [0, 5, 1000])
-def test_silly_tempo_is_refused(bpm):
-    with pytest.raises(ValueError, match="Tempo"):
-        split_for_violy(SAMPLE_MUSICXML.read_bytes(), tempo=bpm)
-
-
 def _with_tempo(blob, bpm, words=None, measure=0):
+    """Add an "Allegro ♩ = bpm" style marking at the start of a measure of the top part."""
     root = _parse(blob)
     dt = '<direction-type><words>%s</words></direction-type>' % words if words else ''
-    root.find("part").findall("measure")[measure].insert(1, ET.fromstring(
+    _insert_at_measure_start(root.find("part").findall("measure")[measure], ET.fromstring(
         '<direction>%s<direction-type><metronome><beat-unit>quarter</beat-unit>'
         '<per-minute>%g</per-minute></metronome></direction-type>'
         '<sound tempo="%g"/></direction>' % (dt, bpm, bpm)))
@@ -126,15 +77,41 @@ def _sound_tempi(root):
     return [s.get("tempo") for s in root.iter("sound") if s.get("tempo")]
 
 
-def test_marked_tempo_is_slowed_by_20_and_says_so():
-    src = _with_tempo(SAMPLE_MUSICXML.read_bytes(), 120, words="Allegro")
-    src = _with_tempo(src, 150, measure=10)          # a later tempo change
-    cello = _cello(split_for_violy(src, slow_by=20, unmarked_tempo=40))
-    assert _sound_tempi(cello) == ["100", "130"]
-    texts = [w.text for w in cello.iter("words")]
-    assert "Practice tempo: 100 BPM (original 120 BPM)" in texts
-    assert "Allegro" in texts                         # the tempo word is kept
-    assert [m.findtext("per-minute") for m in cello.iter("metronome")] == ["150"]
+def _words(root):
+    return [w.text for w in root.iter("words")]
+
+
+def _metronomes(root):
+    return [m.findtext("per-minute") for m in root.iter("metronome")]
+
+
+ALLEGRO_THEN_150 = _with_tempo(_with_tempo(SAMPLE_MUSICXML.read_bytes(), 120, "Allegro"),
+                               150, measure=10)
+
+
+def test_score_tempo_is_copied_to_every_part():
+    # MuseScore only marks the top part; split parts must not lose the tempo.
+    files = split_for_violy(ALLEGRO_THEN_150)
+    for blob in files.values():
+        assert _sound_tempi(_parse(blob)) == ["120", "150"]
+        tempo_marks = [d for d in _parse(blob).iter("direction")
+                       if d.find("sound") is not None and d.find("sound").get("tempo")]
+        assert all(d.find("staff") is None for d in tempo_marks)
+
+
+def test_first_tempo_is_slowed_by_20_and_all_markings_stay():
+    cello = _cello(split_for_violy(ALLEGRO_THEN_150, slow_by=20, unmarked_tempo=40))
+    assert _sound_tempi(cello) == ["100", "150"]        # later change left as written
+    assert _metronomes(cello) == ["120", "150"]         # original marks still shown
+    assert _words(cello) == ["Practice tempo: 100 BPM (original 120 BPM)", "Allegro"]
+
+
+def test_label_goes_just_before_the_first_tempo():
+    first = _cello(split_for_violy(ALLEGRO_THEN_150, slow_by=20)).find("part/measure")
+    directions = first.findall("direction")
+    assert directions[0].findtext(".//words").startswith("Practice tempo")
+    assert directions[0].find("sound") is None          # the label itself sets nothing
+    assert directions[1].find("sound").get("tempo") == "100"
 
 
 def test_slow_marked_tempo_never_drops_below_20():
@@ -145,17 +122,63 @@ def test_slow_marked_tempo_never_drops_below_20():
 def test_unmarked_score_gets_the_default_tempo():
     cello = _cello(split_for_violy(SAMPLE_MUSICXML.read_bytes(), slow_by=20, unmarked_tempo=40))
     assert _sound_tempi(cello) == ["40"]
-    assert [w.text for w in cello.iter("words")] == ["Practice tempo: 40 BPM"]
+    assert _words(cello) == ["Practice tempo: 40 BPM"]
 
 
 def test_slow_by_zero_keeps_the_marked_tempo():
-    cello = _cello(split_for_violy(_with_tempo(SAMPLE_MUSICXML.read_bytes(), 96), slow_by=0,
-                                   unmarked_tempo=40))
-    assert _sound_tempi(cello) == ["96"]
-    assert not any("Practice" in (w.text or "") for w in cello.iter("words"))
+    cello = _cello(split_for_violy(ALLEGRO_THEN_150, slow_by=0, unmarked_tempo=40))
+    assert _sound_tempi(cello) == ["120", "150"]
+    assert "Practice" not in " ".join(filter(None, _words(cello)))
 
 
-def test_forced_tempo_wins():
+def test_forced_tempo_changes_only_the_first_tempo():
+    cello = _cello(split_for_violy(ALLEGRO_THEN_150, tempo=90, slow_by=20, unmarked_tempo=40))
+    assert _sound_tempi(cello) == ["90", "150"]
+    assert _metronomes(cello) == ["120", "150"]
+    assert "Practice tempo: 90 BPM (original 120 BPM)" in _words(cello)
+
+
+def test_forced_tempo_on_unmarked_score():
+    cello = _cello(split_for_violy(SAMPLE_MUSICXML.read_bytes(), tempo=72))
+    assert _sound_tempi(cello) == ["72"]
+
+
+def test_no_tempo_settings_change_nothing():
+    files = split_for_violy(SAMPLE_MUSICXML.read_bytes())
+    assert all(_sound_tempi(_parse(b)) == [] for b in files.values())
+
+
+@pytest.mark.parametrize("kwargs", [{"tempo": 5}, {"tempo": 1000}, {"slow_by": -1},
+                                    {"unmarked_tempo": 0}])
+def test_silly_tempo_is_refused(kwargs):
+    with pytest.raises(ValueError, match="BPM"):
+        split_for_violy(SAMPLE_MUSICXML.read_bytes(), **kwargs)
+
+
+# Whole scores (set_score_tempo): the label goes once, in the top part.
+
+def test_full_score_first_tempo_slowed_label_once():
+    xml, changed = set_score_tempo(ALLEGRO_THEN_150, slow_by=20, unmarked_tempo=40)
+    root = _parse(xml)
+    assert changed and _sound_tempi(root) == ["100", "150"]
+    assert sum("Practice tempo" in (w or "") for w in _words(root)) == 1
+    assert len(root.findall("part")) == 20
+
+
+def test_full_score_repeated_tempo_in_every_part_all_change():
+    root = _parse(ALLEGRO_THEN_150)
+    for part in root.findall("part")[1:]:
+        _insert_at_measure_start(part.find("measure"), ET.fromstring('<sound tempo="120"/>'))
+    xml, _ = set_score_tempo(ET.tostring(root), slow_by=20)
+    assert _sound_tempi(_parse(xml)) == ["100", "150"] + ["100"] * 19
+
+
+def test_full_score_unchanged_is_returned_as_is():
     src = _with_tempo(SAMPLE_MUSICXML.read_bytes(), 120)
-    cello = _cello(split_for_violy(src, tempo=90, slow_by=20, unmarked_tempo=40))
-    assert _sound_tempi(cello) == ["90"]
+    xml, changed = set_score_tempo(src, slow_by=0, unmarked_tempo=40)
+    assert not changed and xml == src
+
+
+def test_full_score_unmarked_gets_default():
+    xml, changed = set_score_tempo(SAMPLE_MUSICXML.read_bytes(), slow_by=20, unmarked_tempo=40)
+    assert changed and _sound_tempi(_parse(xml)) == ["40"]
