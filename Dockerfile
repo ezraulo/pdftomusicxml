@@ -6,9 +6,9 @@
 #   .mscz and writes .mscz, MusicXML, MIDI and PDF.
 # Stage 3 is the runtime: JRE + Tesseract + Python (Flask) + Node.
 
-# Audiveris 5.10.x declares Java 25 as its minimum; a 21 JDK fails compileJava.
+# Audiveris 5.10+ declares Java 25 as its minimum; a 21 JDK fails compileJava.
 FROM eclipse-temurin:25-jdk-noble AS audiveris-build
-ARG AUDIVERIS_VERSION=5.10.2
+ARG AUDIVERIS_VERSION=5.11.0
 RUN apt-get update && apt-get install -y --no-install-recommends git \
     && rm -rf /var/lib/apt/lists/*
 RUN git clone --depth 1 --branch ${AUDIVERIS_VERSION} \
@@ -26,9 +26,17 @@ LABEL org.opencontainers.image.source="https://github.com/ezraulo/pdftomusicxml"
       org.opencontainers.image.description="Sheet music converter: PDF, MuseScore, MusicXML, MIDI; practice tempo; Violy export" \
       org.opencontainers.image.licenses="AGPL-3.0-only"
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      tesseract-ocr tesseract-ocr-eng fontconfig fonts-dejavu-core \
-      python3 python3-venv curl \
+      fontconfig fonts-dejavu-core python3 python3-venv curl \
     && rm -rf /var/lib/apt/lists/*
+
+# Text recognition (titles, tempo words, pizz./arco...). Audiveris bundles Tesseract but
+# runs its legacy engine, which needs the full language data of the tessdata 4.1.0
+# release (the version Audiveris names); Ubuntu's tesseract-ocr-eng ships only the
+# LSTM model, and Audiveris then reads no text at all.
+ADD --checksum=sha256:daa0c97d651c19fba3b25e81317cd697e9908c8208090c94c3905381c23fc047 \
+    https://raw.githubusercontent.com/tesseract-ocr/tessdata/4.1.0/eng.traineddata \
+    /opt/tessdata/eng.traineddata
+RUN chmod -R a+rX /opt/tessdata
 
 COPY --from=audiveris-build /build/app/build/install/app /opt/audiveris
 COPY --from=mscz-build /usr/local/bin/node /usr/local/bin/node
@@ -41,11 +49,13 @@ RUN python3 -m venv /opt/venv && /opt/venv/bin/pip install --no-cache-dir -r req
 COPY app.py omr.py violy_export.py score_tools.py ./
 COPY static ./static
 
+# sun.java2d.uiScale: without it Audiveris 5.11 probes the GTK desktop library for
+# screen scaling at start-up, and dies in this image, which has no GTK.
 ENV PATH=/opt/venv/bin:$PATH \
     AUDIVERIS_CMD=/opt/audiveris/bin/Audiveris \
     WEBMSCORE_CMD="node /opt/mscz/convert.cjs" \
-    TESSDATA_PREFIX=/usr/share/tesseract-ocr/5/tessdata \
-    JAVA_OPTS="-Djava.awt.headless=true -Xmx3g" \
+    TESSDATA_PREFIX=/opt/tessdata \
+    JAVA_OPTS="-Djava.awt.headless=true -Dsun.java2d.uiScale=1 -Xmx3g" \
     PORT=8080
 EXPOSE 8080
 

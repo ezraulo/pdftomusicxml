@@ -11,7 +11,7 @@ page links to this repository for that reason.
 
 The Docker image builds and bundles [Audiveris](https://github.com/Audiveris/audiveris),
 the optical music recognition engine, unmodified, from the release tag in the
-`AUDIVERIS_VERSION` build argument of the [Dockerfile](./Dockerfile) (currently 5.10.2).
+`AUDIVERIS_VERSION` build argument of the [Dockerfile](./Dockerfile) (currently 5.11.0).
 `app.py` runs it as a separate command-line program.
 
 ### webmscore (GPL-3.0)
@@ -24,7 +24,10 @@ npm (MuseScore compiled to WebAssembly, GPL-3.0 with MuseScore's font exception)
 
 ### Tesseract OCR (Apache-2.0)
 
-Installed from Ubuntu packages; Audiveris uses it to read text in scores.
+Audiveris bundles Tesseract to read text in scores. The image adds its English
+language data, `eng.traineddata` from the
+[tessdata 4.1.0](https://github.com/tesseract-ocr/tessdata/tree/4.1.0) release
+(Apache-2.0).
 
 ### solfascribe-omr (MIT)
 

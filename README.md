@@ -1,7 +1,7 @@
 # pdftomusicxml
 
 A small web app for practising from sheet music. Upload a **PDF or photo** of a score
-(read by [Audiveris](https://github.com/Audiveris/audiveris) 5.10.2), a **MuseScore** file
+(read by [Audiveris](https://github.com/Audiveris/audiveris) 5.11.0), a **MuseScore** file
 or a **MusicXML** file, and get it back as **MuseScore (.mscz), MusicXML, MIDI and PDF**,
 at a slower **practice tempo**. There is also an export for **Violy Creator Studio**,
 which needs one file per part.
@@ -101,6 +101,12 @@ private, or put it behind the host's own sign-in.
   it couldn't bridge.
 - The `.pdf` is engraved by MuseScore from what was read, so for a scan it shows what
   Audiveris understood: compare it with the original.
+- Audiveris sometimes reads a short divisi passage (one instrument on two staves) as a
+  separate part that plays only where the real part rests, and hides each part in the
+  systems where the other plays; MuseScore then hides the real part everywhere. The app
+  merges such a passage back into the real part (as two voices) and shows all staves;
+  the READ-ME lists the bars, so they can be checked. Audiveris's log is printed in the
+  server's output (the `docker run` window).
 - If Audiveris can't read some pages, it retries without them. The missing page numbers
   are in the `X-Excluded-Sheets` response header and the READ-ME.
 - Failures return JSON `{"error", "kind", "log_tail"}` with HTTP 422. `kind` is one of
