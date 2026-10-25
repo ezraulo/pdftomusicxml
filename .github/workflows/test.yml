@@ -102,8 +102,11 @@ jobs:
           for ext in mscz musicxml mid pdf; do
             unzip -l all.zip | grep -q "FULLSCORE\.$ext\$" || { echo "missing .$ext"; exit 1; }
           done
-          if unzip -p all.zip READ-ME.txt | grep -q "Problems"; then
-            unzip -p all.zip READ-ME.txt; exit 1
+          unzip -p all.zip READ-ME.txt
+          if unzip -p all.zip READ-ME.txt | grep -q "Problems"; then exit 1; fi
+          # The orchestral sample has no divisi: nothing in it may be merged.
+          if unzip -p all.zip READ-ME.txt | grep -q "merged"; then
+            echo "tidy_score merged parts of the orchestral sample"; exit 1
           fi
       - name: Convert the sample MuseScore file to all formats
         run: |

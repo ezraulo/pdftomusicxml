@@ -204,6 +204,16 @@ def _hidden_measures(part) -> set:
     return hidden
 
 
+def _staff_count(part) -> int:
+    declared = [int(s.text) for s in part.iter("staves") if (s.text or "").strip().isdigit()]
+    used = [int(s.text) for s in part.iter("staff") if (s.text or "").strip().isdigit()]
+    return max(declared + used + [1])
+
+
+# Names Audiveris gives parts it could not read a name for.
+GENERIC_PART_NAMES = {"", "piano", "voice"}
+
+
 def _divisions(part):
     return {d.text.strip() for d in part.iter("divisions") if d.text}
 
@@ -265,32 +275,40 @@ def tidy_score(xml: bytes):
         pitched = [_pitched_measures(p) for p in parts]
         hidden = [_hidden_measures(p) for p in parts]
         numbers = [{m.get("number") for m in p.findall("measure")} for p in parts]
+        staves = [_staff_count(p) for p in parts]
+        part_names = {sp.get("id"): (sp.findtext("part-name") or "").strip()
+                      for sp in root.find("part-list").findall("score-part")}
+        names = [part_names.get(p.get("id"), "") for p in parts]
         for d, donor in enumerate(parts):
             for r, receiver in enumerate(parts):
                 # Merge only the Audiveris pattern: the receiver is absent from the
                 # systems where the donor plays, and the donor is absent elsewhere.
-                # Sparse instruments of a real score (a triangle) never look like that.
+                # In a full score that hides empty staves, a sparse instrument (a
+                # timpani) looks like that too; the staff and name checks keep it.
                 if (r == d or not pitched[d] or not pitched[r]
                         or pitched[d] & pitched[r]
                         or not pitched[d] <= hidden[r]
                         or not pitched[r] & numbers[d] <= hidden[d]
                         or len(pitched[d]) > MAX_DONOR_SHARE * counts[d]
                         or len(pitched[d]) >= len(pitched[r])
+                        # a divisi read as its own part has more staves than the
+                        # real one and no name of its own
+                        or staves[d] <= staves[r]
+                        or not (names[d].lower() in GENERIC_PART_NAMES
+                                or names[d] == names[r])
                         or _divisions(donor) != _divisions(receiver)):
                     continue
                 _merge_part_into(receiver, donor)
                 part_list = root.find("part-list")
-                names = {sp.get("id"): (sp.findtext("part-name") or sp.get("id"))
-                         for sp in part_list.findall("score-part")}
                 for sp in part_list.findall("score-part"):
                     if sp.get("id") == donor.get("id"):
                         part_list.remove(sp)
                 root.remove(donor)
                 notes.append("merged %s (bars %s) into %s: it only played where %s rested"
                              " (likely a divisi passage)" % (
-                                 names[donor.get("id")],
+                                 names[d] or donor.get("id"),
                                  ", ".join(sorted(pitched[d], key=_bar_key)),
-                                 names[receiver.get("id")], names[receiver.get("id")]))
+                                 names[r] or receiver.get("id"), names[r] or receiver.get("id")))
                 changed = True
                 break
             if changed:

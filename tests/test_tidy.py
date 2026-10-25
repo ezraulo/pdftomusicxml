@@ -63,6 +63,21 @@ def test_parts_that_play_together_are_not_merged():
     assert len(_parts(xml)) == 2 and not any("merged" in n for n in notes)
 
 
+def test_a_named_single_staff_instrument_is_not_merged():
+    # A full score hiding empty staves: the timpani plays only bars 5-6, but it has
+    # a name of its own and one staff, so it is a real instrument.
+    timpani = NOTE % ("A", "1", "")
+    xml = _score(CELLO, {"5": timpani, "6": timpani}).replace(b">Piano<", b">Timp.<")
+    out, notes = omr.tidy_score(xml)
+    assert len(_parts(out)) == 2 and not any("merged" in n for n in notes)
+
+
+def test_a_one_staff_generic_part_is_not_merged():
+    one_staff = NOTE % ("A", "1", "")
+    out, _ = omr.tidy_score(_score(CELLO, {"5": one_staff, "6": one_staff}))
+    assert len(_parts(out)) == 2
+
+
 def test_a_large_part_is_not_merged():
     duet = {str(n): TWO_STAVES for n in (5, 6, 7)}                  # 3 of 8 bars > 25%
     cello = {str(n): NOTE % ("D", "1", "") for n in (1, 2, 3, 4)}
