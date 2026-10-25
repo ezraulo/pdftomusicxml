@@ -26,8 +26,16 @@ jobs:
         run: python -m pytest -v tests
 
   smoke:
-    name: Docker smoke test (real Audiveris)
-    runs-on: ubuntu-latest
+    name: Docker smoke test (real Audiveris, ${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64             # e.g. Apple-silicon Macs
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -86,7 +94,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: smoke-output
+          name: smoke-output-${{ matrix.arch }}
           path: |
             violy.zip
             all.zip
