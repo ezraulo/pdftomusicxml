@@ -1,0 +1,74 @@
+name: Test
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  unit:
+    name: Unit tests (fake Audiveris)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install
+        run: |
+          pip install -r requirements-dev.txt
+          npm ci --prefix mscz
+      - name: Test
+        run: python -m pytest -v tests
+
+  smoke:
+    name: Docker smoke test (real Audiveris)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t pdftomusicxml .
+      - name: Start container
+        run: |
+          docker run -d --name app -p 8080:8080 pdftomusicxml
+          for i in $(seq 1 30); do curl -sf http://localhost:8080/healthz && break; sleep 2; done
+          curl -sf http://localhost:8080/healthz | tee healthz.json
+          grep -q '"audiveris":true' healthz.json
+          grep -q '"mscz":true' healthz.json
+      - name: Convert the sample PDF for Violy
+        run: |
+          curl -sS --fail-with-body -o violy.zip -D headers.txt \
+            -F "file=@docs/examples/GeneralUser_Orchestral_Example_FULLSCORE.pdf" \
+            -F format=violy -F title="Smoke Test" \
+            http://localhost:8080/convert
+          cat headers.txt
+          unzip -l violy.zip
+          python3 - <<'PY'
+          import io, zipfile, xml.etree.ElementTree as ET
+          z = zipfile.ZipFile("violy.zip")
+          parts = [n for n in z.namelist() if n.endswith(".musicxml")]
+          mscz = [n for n in z.namelist() if n.endswith(".mscz")]
+          assert parts, "no MusicXML parts"
+          assert len(mscz) == len(parts), (len(mscz), len(parts))
+          for n in parts:
+              root = ET.fromstring(z.read(n))
+              assert [p.get("id") for p in root.iter("part")] == ["P1"], n
+              assert root.find("part").findall("measure"), n
+          print("OK:", len(parts), "parts with .mscz")
+          PY
+      - name: Container log
+        if: always()
+        run: docker logs app 2>&1 | tail -200
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-output
+          path: |
+            violy.zip
+            headers.txt
+          if-no-files-found: ignore

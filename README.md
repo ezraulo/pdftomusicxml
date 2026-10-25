@@ -1,33 +1,128 @@
-# mscz-api
+# pdftomusicxml
 
-This is a HTTP API to manage MSCZ files. The public API is at https://mscz-api.librescore.org/. Source code is under the GPLv3.
+Upload sheet music as a PDF or image and get MusicXML back. The conversion is done by
+[Audiveris](https://github.com/Audiveris/audiveris) 5.10.2 behind a small Flask app.
+There is also an export for **Violy Creator Studio**, which needs one file per part.
 
-## Usage
+## Endpoints
 
-### Rate limits
+| Route | What it does |
+| ----- | ------------ |
+| `GET /` | Upload page |
+| `GET /healthz` | `{"status": "ok", "audiveris": true, "mscz": true}` |
+| `POST /convert` | Multipart form, described below |
 
-The rate limit is `100` API calls for ten minutes. An API call is one HTTP request.
+`POST /convert` fields:
 
-### Metadata
+| Field | Values |
+| ----- | ------ |
+| `file` | PDF, PNG, JPG or TIFF (default limit 40 MB) |
+| `format` | `mxl` (default), `musicxml` (uncompressed) or `violy` |
+| `title`, `composer` | `violy` only, optional: written into every part |
+| `mscz` | `violy` only: `1` (default) also writes a `.mscz` per part, `0` skips it |
 
-The `/meta` path takes a MSCZ file through a post request (`application/x-musescore`).
-and sends back a JSON file with metadata.
+- A one-movement score comes back as a single file. Audiveris sometimes splits a score
+  into several movements at a page break it can't bridge; you then get a zip with all of
+  them.
+- If Audiveris can't read some pages, it retries without them. The missing page numbers
+  are in the `X-Excluded-Sheets` response header (and the Violy read-me).
+- Failures return JSON `{"error", "kind", "log_tail"}` with HTTP 422. `kind` is one of
+  `rhythm-analysis-abort` (retrying won't help), `unreadable-input`, `timeout`,
+  `omr-failed` or `violy-split-failed`.
 
-### Conversion Formats
+```bash
+curl -F file=@score.pdf -F format=musicxml -OJ http://localhost:8080/convert
+```
 
-For conversion, you `POST /<format>/<instrument>`. The available formats are `midi`,
-`mxml`, and `mmxl`. It will return the appropriate mime-type for `<format>`.
-`<instument>` is the ID of the excerpt from the metadata, so a `/meta` request should
-be made before conversion. Simply `POST /<format>` for the full score.
+## Violy Creator Studio export
 
-### Error codes
+`format=violy` returns a zip that's ready for Violy's upload form
+([creator.violy.app](https://creator.violy.app)). The requirements below were found by
+testing (October 2026), not from Violy's documentation:
 
-| Reason | Code                                                          |
-| ------ | ------------------------------------------------------------- |
-| 400    | Invalid format, invalid instrument, or malformed `mscz` file. |
+- **One MusicXML per part.** The score is split with `violy_export.py`.
+- **The part id must be `P1`.** Any other id (for example `P4`, the fourth part of a
+  score) crashes Violy's renderer ("xml file error"), even for a single measure.
+- **Real notes.** A part with no measures is refused by the splitter.
+- **Uncompressed** `.musicxml`, not `.mxl`.
+- **Title and composer:** the files carry whatever you typed (or "Untitled"). You still
+  have to **pick the title, instrument and composer from Violy's lists** in the form;
+  typed text alone is ignored.
+- **A `.mscz` per part** is also required. The zip includes one, written by
+  [webmscore](https://github.com/LibreScore/webmscore) (MuseScore 4 compiled to
+  WebAssembly). **It has not yet been confirmed that Violy accepts these files.** If it
+  refuses them, open the `.musicxml` in MuseScore and use *File > Save As*.
+- There is no MIDI upload field. "Add accompaniment" is a second block with the same
+  fields.
 
-## Examples
+Not causes of upload errors (all tested): MusicXML version, identification block, MIDI
+instrument entries, lyrics, layout/print tags, measure widths, tempo and Pizz markings,
+key without mode, bass clef, ties, two-staff piano part.
 
-Examples are available in `docs/examples`, with an mscz file, its metadata, and the
-various conversions for that file. All files there were converted with the API. Providing
-mscz files to convert would help. `GeneralUser Orchestral Example` provided by Generaluser GS.
+**Check a file without submitting:** in Violy's Create Music form, attach a MusicXML and
+click *Preview*. Good files show notation; bad ones show a blank dialog.
+
+The splitter also works on its own, with no Audiveris (standard library only):
+
+```bash
+python violy_export.py score.musicxml outdir --title "My Piece" --composer "Someone"
+python violy_export.py score.mxl outdir
+```
+
+Always check the notation before uploading: optical music recognition makes mistakes.
+
+## Running
+
+```bash
+docker compose up --build        # then open http://localhost:8080
+```
+
+The first build compiles Audiveris and takes about 10–15 minutes.
+
+### Cloud Run
+
+```bash
+gcloud run deploy pdftomusicxml --source . --region europe-west2 \
+  --memory 4Gi --cpu 2 --timeout 900 --concurrency 1
+```
+
+Concurrency 1 matches the single gunicorn worker: Audiveris is memory-hungry, so each
+container converts one score at a time.
+
+### Configuration (environment variables)
+
+| Variable | Default | Meaning |
+| -------- | ------- | ------- |
+| `PORT` | `8080` | |
+| `AUDIVERIS_CMD` | `/opt/audiveris/bin/Audiveris` | |
+| `OMR_TIMEOUT_S` | `840` | Seconds before an Audiveris run is killed |
+| `MAX_UPLOAD_MB` | `40` | |
+| `MSCZ_CMD` | `node /opt/mscz/to_mscz.cjs` in the image | Unset means no `.mscz` files |
+
+## Development
+
+```bash
+python -m venv .venv && . .venv/bin/activate
+pip install -r requirements-dev.txt
+npm ci --prefix mscz            # optional: enables the .mscz test
+python -m pytest tests
+```
+
+The tests use a stand-in for Audiveris (`tests/fake_audiveris.py`) and the sample score in
+`docs/examples/`, so they need no Java. The **Docker smoke test** in GitHub Actions
+builds the real image and converts `docs/examples/...FULLSCORE.pdf` with real Audiveris.
+
+| File | Role |
+| ---- | ---- |
+| `app.py` | Flask app |
+| `omr.py` | Runs Audiveris: movements, retry without broken pages, failure kinds |
+| `violy_export.py` | Splits a score into Violy-ready single-part files |
+| `mscz_export.py`, `mscz/to_mscz.cjs` | `.mscz` writing via webmscore in Node |
+
+## Licence
+
+AGPL-3.0 (see [LICENSE](./LICENSE)), matching Audiveris. Third-party parts and their
+licences are listed in [NOTICE.md](./NOTICE.md).
+
+This repository started as a copy of LibreScore's mscz-api; that code has been replaced
+and remains in the git history.
