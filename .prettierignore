@@ -1,7 +1,0 @@
-dist/
-.github/
-docs/
-functions/
-temp/
-
-package-lock.json

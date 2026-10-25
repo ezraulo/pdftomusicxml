@@ -1,19 +1,16 @@
-# npm
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+
+# Node (mscz helper)
 node_modules/
-.npm/
 
-# config files
-config.json
-
-# Temporary
+# local output
+out/
 temp/
-
-# logs and application-specific
-mscz-api.log
-dist/
-*firebase*
-
-
 
 # gemini-cli settings
 .gemini/

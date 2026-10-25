@@ -1,33 +1,171 @@
-# mscz-api
+# pdftomusicxml
 
-This is a HTTP API to manage MSCZ files. The public API is at https://mscz-api.librescore.org/. Source code is under the GPLv3.
+A small web app for practising from sheet music. Upload a **PDF or photo** of a score
+(read by [Audiveris](https://github.com/Audiveris/audiveris) 5.10.2), a **MuseScore** file
+or a **MusicXML** file, and get it back as **MuseScore (.mscz), MusicXML, MIDI and PDF**,
+at a slower **practice tempo**. There is also an export for **Violy Creator Studio**,
+which needs one file per part.
 
-## Usage
+## Endpoints
 
-### Rate limits
+| Route | What it does |
+| ----- | ------------ |
+| `GET /` | Upload page |
+| `GET /healthz` | `{"status": "ok", "audiveris": true, "webmscore": true}` |
+| `POST /convert` | Multipart form, described below |
 
-The rate limit is `100` API calls for ten minutes. An API call is one HTTP request.
+`POST /convert` fields:
 
-### Metadata
+| Field | Values |
+| ----- | ------ |
+| `file` | PDF, PNG, JPG or TIFF (read by Audiveris); `.mscz`/`.mscx`; `.musicxml`/`.xml`/`.mxl` (default limit 40 MB) |
+| `format` | `all` (default): zip of `.mscz`, `.musicxml`, `.mid`, `.pdf` · `musicxml` · `mxl` · `violy` |
+| `slow_by` | play the first marked tempo this many BPM slower (default `20`) |
+| `default_tempo` | tempo when the score has none (default `40`) |
+| `tempo` | optional: force the first tempo to this BPM (wins over both above) |
+| `title`, `composer` | `violy` only, optional: written into every part |
+| `mscz` | `violy` only: `1` (default) also writes a `.mscz` per part, `0` skips it |
 
-The `/meta` path takes a MSCZ file through a post request (`application/x-musescore`).
-and sends back a JSON file with metadata.
+- `all` and `violy` always return a zip with a READ-ME. `musicxml` and `mxl` return one
+  file, or a zip when Audiveris split the score into several movements at a page break
+  it couldn't bridge.
+- The `.pdf` is engraved by MuseScore from what was read, so for a scan it shows what
+  Audiveris understood: compare it with the original.
+- If Audiveris can't read some pages, it retries without them. The missing page numbers
+  are in the `X-Excluded-Sheets` response header and the READ-ME.
+- Failures return JSON `{"error", "kind", "log_tail"}` with HTTP 422. `kind` is one of
+  `rhythm-analysis-abort` (retrying won't help), `unreadable-input`, `timeout`,
+  `omr-failed`, `unsupported-score` or `violy-split-failed`.
 
-### Conversion Formats
+```bash
+curl -F file=@score.pdf -OJ http://localhost:8080/convert                     # all formats
+curl -F file=@song.mscz -F format=violy -F tempo=60 -OJ http://localhost:8080/convert
+```
 
-For conversion, you `POST /<format>/<instrument>`. The available formats are `midi`,
-`mxml`, and `mmxl`. It will return the appropriate mime-type for `<format>`.
-`<instument>` is the ID of the excerpt from the metadata, so a `/meta` request should
-be made before conversion. Simply `POST /<format>` for the full score.
+## Practice tempo
 
-### Error codes
+Practice apps often let you speed a piece up but not slow it down without a paid plan
+(Violy, which does start a piece at the tempo written in the file), or don't let you
+change the tempo at all on the free plan (PlayScore 2). So every output starts slower
+by default:
 
-| Reason | Code                                                          |
-| ------ | ------------------------------------------------------------- |
-| 400    | Invalid format, invalid instrument, or malformed `mscz` file. |
+- The **first tempo** plays at the marked tempo **minus 20 BPM** (never below 20), or at
+  **40 BPM** if the score has no tempo. "Force a tempo" sets it to an exact number.
+- **Every original marking stays** on the score, and later tempo changes are left as
+  written. A label goes above the first marking: "Practice tempo: 100 BPM (original
+  120 BPM)", or "Practice tempo: 40 BPM" for an unmarked score.
+- Tempos are counted in quarter notes, as MusicXML does (a dotted-quarter = 60 in 6/8 is
+  90 quarter beats).
+- Tick "Keep the score's own tempo" (or send `slow_by=0`, `default_tempo=`) to leave it.
 
-## Examples
+A MuseScore file with no visible tempo marking counts as unmarked, even if MuseScore
+plays it at a hidden default tempo.
 
-Examples are available in `docs/examples`, with an mscz file, its metadata, and the
-various conversions for that file. All files there were converted with the API. Providing
-mscz files to convert would help. `GeneralUser Orchestral Example` provided by Generaluser GS.
+**PlayScore 2:** the free plan only opens photos taken in the app, so it can't import
+these files. Its own score folders do hold an ordinary MusicXML file (`doc.xml`, read by
+PlayScore's scanner), which can be uploaded here. PlayScore drops printed tempos, so set
+"Force a tempo" for those.
+
+## Violy Creator Studio export
+
+`format=violy` returns a zip that's ready for Violy's upload form
+([creator.violy.app](https://creator.violy.app)). The requirements below were found by
+testing (October 2026), not from Violy's documentation:
+
+- **One MusicXML per part.** The score is split with `violy_export.py`.
+- **The part id must be `P1`.** Any other id (for example `P4`, the fourth part of a
+  score) crashes Violy's renderer ("xml file error"), even for a single measure.
+- **Real notes.** A part with no measures is refused by the splitter.
+- **Uncompressed** `.musicxml`, not `.mxl`.
+- **Title and composer:** the files carry whatever you typed (or "Untitled"). You still
+  have to **pick the title, instrument and composer from Violy's lists** in the form;
+  typed text alone is ignored.
+- **A `.mscz` per part** is also required. The zip includes one, written by
+  [webmscore](https://github.com/LibreScore/webmscore) (MuseScore 4 compiled to
+  WebAssembly). Violy accepts them (tested October 2026).
+- **Tempo:** Creator Studio has no tempo field, and in the app players can speed a piece
+  up but not slow it down (a file with no tempo starts at 100 BPM). The practice tempo
+  (above) is copied into every part, because MuseScore and Audiveris only mark the top one.
+- Violy plays one part at a time: a toggle chooses which uploaded part (the main part
+  or the accompaniment) plays, each as its own instrument; they don't play together.
+- A part with three staves (two instruments combined in one part) doesn't render in
+  Violy at all, so parts can't be combined that way. A two-staff piano part works but
+  is shown on one staff.
+- The `.mscz` is required, but Violy doesn't appear to use its content: any `.mscz`
+  is accepted, and the notation and sound come from the MusicXML. The export still
+  makes a matching one per part.
+- There is no MIDI upload field. "Add accompaniment" is a second block with the same
+  fields.
+
+Not causes of upload errors (all tested): MusicXML version, identification block, MIDI
+instrument entries, lyrics, layout/print tags, measure widths, tempo and Pizz markings,
+key without mode, bass clef, ties, two-staff piano part.
+
+**Check a file without submitting:** in Violy's Create Music form, attach a MusicXML and
+click *Preview*. Good files show notation; bad ones show a blank dialog.
+
+The splitter also works on its own, without the app (standard library only):
+
+```bash
+python violy_export.py score.musicxml outdir --title "My Piece" --composer "Someone" --slow-by 20 --unmarked-tempo 40
+python violy_export.py score.mxl outdir
+```
+
+Always check the notation before uploading: optical music recognition makes mistakes.
+
+## Running
+
+```bash
+docker compose up --build        # then open http://localhost:8080
+```
+
+The first build compiles Audiveris and takes about 10–15 minutes.
+
+### Cloud Run
+
+```bash
+gcloud run deploy pdftomusicxml --source . --region europe-west2 \
+  --memory 4Gi --cpu 2 --timeout 900 --concurrency 1
+```
+
+Concurrency 1 matches the single gunicorn worker: Audiveris is memory-hungry, so each
+container converts one score at a time.
+
+### Configuration (environment variables)
+
+| Variable | Default | Meaning |
+| -------- | ------- | ------- |
+| `PORT` | `8080` | |
+| `AUDIVERIS_CMD` | `/opt/audiveris/bin/Audiveris` | |
+| `OMR_TIMEOUT_S` | `840` | Seconds before an Audiveris run is killed |
+| `MAX_UPLOAD_MB` | `40` | |
+| `WEBMSCORE_CMD` | `node /opt/mscz/convert.cjs` in the image | Unset means no `.mscz`, MIDI or PDF output and no `.mscz` input |
+
+## Development
+
+```bash
+python -m venv .venv && . .venv/bin/activate
+pip install -r requirements-dev.txt
+npm ci --prefix mscz            # optional: enables the webmscore tests
+python -m pytest tests
+```
+
+The tests use a stand-in for Audiveris (`tests/fake_audiveris.py`) and the sample score in
+`docs/examples/`, so they need no Java. The **Docker smoke test** in GitHub Actions
+builds the real image and converts the sample PDF (with real Audiveris) and the sample
+`.mscz` to all formats and to Violy parts.
+
+| File | Role |
+| ---- | ---- |
+| `app.py` | Flask app |
+| `omr.py` | Runs Audiveris: movements, retry without broken pages, failure kinds |
+| `violy_export.py` | Splits a score into Violy-ready single-part files; the practice-tempo rule |
+| `score_tools.py`, `mscz/convert.cjs` | `.mscz`/MusicXML/MIDI/PDF conversion via webmscore in Node |
+
+## Licence
+
+AGPL-3.0 (see [LICENSE](./LICENSE)), matching Audiveris. Third-party parts and their
+licences are listed in [NOTICE.md](./NOTICE.md).
+
+This repository started as a copy of LibreScore's mscz-api; that code has been replaced
+and remains in the git history.

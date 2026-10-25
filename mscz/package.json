@@ -1,0 +1,9 @@
+{
+  "name": "pdftomusicxml-mscz",
+  "private": true,
+  "description": "Converts between MuseScore, MusicXML, MIDI and PDF with webmscore (MuseScore 4 compiled to WebAssembly).",
+  "license": "GPL-3.0-only",
+  "dependencies": {
+    "webmscore": "1.2.1"
+  }
+}

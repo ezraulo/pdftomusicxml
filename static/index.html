@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sheet Music Converter</title>
+<style>
+  :root { --bg: #fafaf8; --fg: #1d1d1b; --muted: #66665f; --line: #d9d9d2; --accent: #2f5d8a; --warn: #8a4b00; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161615; --fg: #ecece6; --muted: #a3a39a; --line: #3a3a36; --accent: #8db8e3; --warn: #e3a35c; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.5 system-ui, sans-serif; }
+  main { max-width: 640px; margin: 0 auto; padding: 32px 16px; }
+  h1 { font-size: 1.6rem; margin: 0 0 4px; }
+  p.lead { color: var(--muted); margin: 0 0 24px; }
+  fieldset { border: 1px solid var(--line); border-radius: 8px; padding: 16px; margin: 0 0 16px; }
+  legend { padding: 0 6px; font-weight: 600; }
+  label { display: block; margin: 8px 0; }
+  input[type=text], input[type=number], input[type=file] { width: 100%; padding: 8px; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: inherit; font: inherit; }
+  .violy { display: none; }
+  .violy.on { display: block; }
+  .note { color: var(--warn); font-size: .92rem; }
+  .hint { color: var(--muted); font-size: .92rem; margin: 0 0 8px; }
+  button { background: var(--accent); color: var(--bg); border: 0; border-radius: 6px; padding: 10px 18px; font: inherit; font-weight: 600; cursor: pointer; }
+  button:disabled { opacity: .6; cursor: progress; }
+  #status { margin-top: 16px; white-space: pre-wrap; }
+  #status.error { color: var(--warn); }
+  footer { margin-top: 40px; color: var(--muted); font-size: .85rem; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Sheet music converter</h1>
+  <p class="lead">Upload a PDF or photo of sheet music, a MuseScore file or a MusicXML file, and get it back
+    as MuseScore, MusicXML, MIDI and PDF, at a practice tempo. Reading a scan can take a few minutes.</p>
+
+  <form id="form">
+    <fieldset>
+      <legend>Score</legend>
+      <label>File: PDF, PNG, JPG, TIFF, MuseScore (.mscz) or MusicXML (.musicxml, .mxl)
+        <input type="file" name="file" accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff,.mscz,.mscx,.musicxml,.xml,.mxl" required>
+      </label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Tempo</legend>
+      <p class="hint">Practice apps let you speed a piece up but often not slow it down, so the first tempo
+        starts slower. Every original marking stays on the score; a label such as
+        "Practice tempo: 100 BPM (original 120 BPM)" is added above the first one. Tempos are in quarter-note beats.</p>
+      <label>Play the first marked tempo slower by (BPM) <input type="number" name="slow_by" value="20" min="0" max="400" step="1" inputmode="numeric"></label>
+      <label>Tempo when the score has none (BPM) <input type="number" name="default_tempo" value="40" min="10" max="400" step="1" inputmode="numeric"></label>
+      <label>Or force a tempo for this piece (BPM) <input type="number" name="tempo" min="10" max="400" step="1" inputmode="numeric" placeholder="Optional: overrides both of the above"></label>
+      <label><input type="checkbox" id="keep"> Keep the score's own tempo</label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Output</legend>
+      <label><input type="radio" name="format" value="all" checked> All formats (zip: .mscz, .musicxml, .mid, .pdf)</label>
+      <label><input type="radio" name="format" value="violy"> Violy Creator Studio (zip: one part per file)</label>
+      <label><input type="radio" name="format" value="musicxml"> MusicXML only (.musicxml)</label>
+
+      <div class="violy" id="violy">
+        <label>Title <input type="text" name="title" placeholder="Written into every part"></label>
+        <label>Composer <input type="text" name="composer" placeholder="Optional"></label>
+        <label><input type="checkbox" name="mscz" value="1" checked> Also make a .mscz for each part</label>
+        <p class="note">You still have to set the title, instrument and composer yourself in Violy's form:
+          pick them from Violy's lists, because typed text alone is ignored.</p>
+      </div>
+    </fieldset>
+
+    <button type="submit" id="go">Convert</button>
+  </form>
+  <div id="status" role="status" aria-live="polite"></div>
+
+  <footer>Uses <a href="https://github.com/Audiveris/audiveris">Audiveris</a> (AGPL-3.0) and
+    <a href="https://github.com/LibreScore/webmscore">webmscore</a> (GPL-3.0).
+    Source: <a href="https://github.com/ezraulo/pdftomusicxml">ezraulo/pdftomusicxml</a> (AGPL-3.0).</footer>
+</main>
+<script>
+  const form = document.getElementById('form');
+  const status = document.getElementById('status');
+  const go = document.getElementById('go');
+  const violy = document.getElementById('violy');
+
+  const keep = document.getElementById('keep');
+  form.addEventListener('change', () => {
+    violy.classList.toggle('on', form.format.value === 'violy');
+    for (const name of ['slow_by', 'default_tempo', 'tempo']) form[name].disabled = keep.checked;
+  });
+
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const data = new FormData(form);
+    if (!form.mscz.checked) data.set('mscz', '0');
+    if (document.getElementById('keep').checked) {
+      data.set('slow_by', '0'); data.set('default_tempo', ''); data.set('tempo', '');
+    }
+    go.disabled = true;
+    status.className = '';
+    status.textContent = 'Converting… reading a scan can take several minutes.';
+    try {
+      const response = await fetch('/convert', { method: 'POST', body: data });
+      if (!response.ok) {
+        let message = 'Conversion failed (HTTP ' + response.status + ').';
+        try { const body = await response.json(); message = body.error + (body.kind ? ' [' + body.kind + ']' : ''); } catch (_) {}
+        throw new Error(message);
+      }
+      const disposition = response.headers.get('Content-Disposition') || '';
+      const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(disposition);
+      const name = match ? decodeURIComponent(match[1]) : 'score';
+      const url = URL.createObjectURL(await response.blob());
+      const link = Object.assign(document.createElement('a'), { href: url, download: name });
+      document.body.append(link); link.click(); link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+      let text = 'Done: ' + name;
+      const excluded = response.headers.get('X-Excluded-Sheets');
+      if (excluded) text += '\nWarning: page(s) ' + excluded + ' could not be read and are missing.';
+      status.textContent = text;
+    } catch (error) {
+      status.className = 'error';
+      status.textContent = error.message;
+    } finally {
+      go.disabled = false;
+    }
+  });
+</script>
+</body>
+</html>
