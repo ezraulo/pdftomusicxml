@@ -49,11 +49,13 @@ RUN python3 -m venv /opt/venv && /opt/venv/bin/pip install --no-cache-dir -r req
 COPY app.py omr.py violy_export.py score_tools.py ./
 COPY static ./static
 
+# sun.java2d.uiScale: without it Audiveris 5.11 probes the GTK desktop library for
+# screen scaling at start-up, and dies in this image, which has no GTK.
 ENV PATH=/opt/venv/bin:$PATH \
     AUDIVERIS_CMD=/opt/audiveris/bin/Audiveris \
     WEBMSCORE_CMD="node /opt/mscz/convert.cjs" \
     TESSDATA_PREFIX=/opt/tessdata \
-    JAVA_OPTS="-Djava.awt.headless=true -Xmx3g" \
+    JAVA_OPTS="-Djava.awt.headless=true -Dsun.java2d.uiScale=1 -Xmx3g" \
     PORT=8080
 EXPOSE 8080
 
