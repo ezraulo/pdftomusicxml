@@ -53,10 +53,11 @@
       <div class="violy" id="violy">
         <label>Title <input type="text" name="title" placeholder="Written into every part"></label>
         <label>Composer <input type="text" name="composer" placeholder="Optional"></label>
-        <label>Practice tempo, quarter-note BPM <input type="number" name="practice_tempo" value="60" min="10" max="400" step="1" inputmode="numeric" placeholder="Empty: keep the score's tempo"></label>
-        <label><input type="checkbox" id="exact"> Use exactly this tempo, even if the score is slower</label>
-        <p class="hint">Violy lets you speed a piece up but not slow it down, so parts start at this tempo
-          (or the score's own, if slower). The score is marked "Practice tempo: 60 BPM (original … BPM)".</p>
+        <p class="hint">Violy lets you speed a piece up but not slow it down, so parts start at a slower
+          practice tempo, marked at the top as "Practice tempo: 100 BPM (original 120 BPM)". Tempos are in quarter-note beats.</p>
+        <label>Slow marked tempos by (BPM) <input type="number" name="slow_by" value="20" min="0" max="400" step="1" inputmode="numeric"></label>
+        <label>Tempo when the score has none (BPM) <input type="number" name="default_tempo" value="40" min="10" max="400" step="1" inputmode="numeric"></label>
+        <label>Force a tempo for this piece (BPM) <input type="number" name="tempo" min="10" max="400" step="1" inputmode="numeric" placeholder="Optional: overrides both of the above"></label>
         <label><input type="checkbox" name="mscz" value="1" checked> Also make a .mscz for each part</label>
         <p class="note">You still have to set the title, instrument and composer yourself in Violy's form:
           pick them from Violy's lists, because typed text alone is ignored.</p>
@@ -85,9 +86,6 @@
     event.preventDefault();
     const data = new FormData(form);
     if (!form.mscz.checked) data.set('mscz', '0');
-    if (document.getElementById('exact').checked && form.practice_tempo.value) {
-      data.set('tempo', form.practice_tempo.value);
-    }
     go.disabled = true;
     status.className = '';
     status.textContent = 'Converting… this can take several minutes.';

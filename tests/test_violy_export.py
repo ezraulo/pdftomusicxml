@@ -122,31 +122,40 @@ def _cello(files):
     return _parse(next(b for n, b in files.items() if "Violoncellos" in n))
 
 
-def test_practice_tempo_slows_a_fast_score_and_says_so():
+def _sound_tempi(root):
+    return [s.get("tempo") for s in root.iter("sound") if s.get("tempo")]
+
+
+def test_marked_tempo_is_slowed_by_20_and_says_so():
     src = _with_tempo(SAMPLE_MUSICXML.read_bytes(), 120, words="Allegro")
     src = _with_tempo(src, 150, measure=10)          # a later tempo change
-    cello = _cello(split_for_violy(src, practice_tempo=60))
-    assert [s.get("tempo") for s in cello.iter("sound") if s.get("tempo")] == ["60", "75"]
+    cello = _cello(split_for_violy(src, slow_by=20, unmarked_tempo=40))
+    assert _sound_tempi(cello) == ["100", "130"]
     texts = [w.text for w in cello.iter("words")]
-    assert "Practice tempo: 60 BPM (original 120 BPM)" in texts
+    assert "Practice tempo: 100 BPM (original 120 BPM)" in texts
     assert "Allegro" in texts                         # the tempo word is kept
     assert [m.findtext("per-minute") for m in cello.iter("metronome")] == ["150"]
 
 
-def test_practice_tempo_leaves_a_slow_score_alone():
-    src = _with_tempo(SAMPLE_MUSICXML.read_bytes(), 50)
-    cello = _cello(split_for_violy(src, practice_tempo=60))
-    assert [s.get("tempo") for s in cello.iter("sound") if s.get("tempo")] == ["50"]
+def test_slow_marked_tempo_never_drops_below_20():
+    cello = _cello(split_for_violy(_with_tempo(SAMPLE_MUSICXML.read_bytes(), 30), slow_by=20))
+    assert _sound_tempi(cello) == ["20"]
+
+
+def test_unmarked_score_gets_the_default_tempo():
+    cello = _cello(split_for_violy(SAMPLE_MUSICXML.read_bytes(), slow_by=20, unmarked_tempo=40))
+    assert _sound_tempi(cello) == ["40"]
+    assert [w.text for w in cello.iter("words")] == ["Practice tempo: 40 BPM"]
+
+
+def test_slow_by_zero_keeps_the_marked_tempo():
+    cello = _cello(split_for_violy(_with_tempo(SAMPLE_MUSICXML.read_bytes(), 96), slow_by=0,
+                                   unmarked_tempo=40))
+    assert _sound_tempi(cello) == ["96"]
     assert not any("Practice" in (w.text or "") for w in cello.iter("words"))
 
 
-def test_practice_tempo_when_score_has_none():
-    cello = _cello(split_for_violy(SAMPLE_MUSICXML.read_bytes(), practice_tempo=60))
-    assert [s.get("tempo") for s in cello.iter("sound") if s.get("tempo")] == ["60"]
-    assert [w.text for w in cello.iter("words")] == ["Practice tempo: 60 BPM"]
-
-
-def test_exact_tempo_wins_over_practice_tempo():
-    src = _with_tempo(SAMPLE_MUSICXML.read_bytes(), 50)
-    cello = _cello(split_for_violy(src, tempo=90, practice_tempo=60))
-    assert [s.get("tempo") for s in cello.iter("sound") if s.get("tempo")] == ["90"]
+def test_forced_tempo_wins():
+    src = _with_tempo(SAMPLE_MUSICXML.read_bytes(), 120)
+    cello = _cello(split_for_violy(src, tempo=90, slow_by=20, unmarked_tempo=40))
+    assert _sound_tempi(cello) == ["90"]

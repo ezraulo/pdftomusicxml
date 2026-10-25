@@ -8,11 +8,11 @@ app.py - PDF/image to MusicXML with Audiveris, plus a Violy Creator Studio expor
                      format    mxl (default) | musicxml | violy
                      title     violy only, optional: work title written into each part
                      composer  violy only, optional
-                     practice_tempo  violy only: start no faster than this quarter-note BPM
-                               (default 60; empty keeps the score's tempo). Violy lets
-                               players speed a piece up but not slow it down.
-                     tempo     violy only, optional: exact BPM for every part (wins over
-                               practice_tempo)
+                     slow_by   violy only: lower marked tempos by this many BPM (default 20)
+                     default_tempo  violy only: tempo when the score has none (default 40)
+                     tempo     violy only, optional: force this BPM for this piece (wins
+                               over the two above). Violy lets players speed a piece
+                               up but not slow it down, so the export starts slow.
                      mscz      violy only, "1" (default) or "0": also write .mscz files
 
 A one-movement result comes back as one file; several movements come back as a zip.
@@ -37,8 +37,9 @@ from violy_export import _read_xml_bytes, split_for_violy
 ALLOWED_SUFFIXES = {".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff"}
 FORMATS = ("mxl", "musicxml", "violy")
 # Violy lets players speed a piece up, but slowing below the file's tempo needs a paid
-# plan, so the Violy export starts slow unless told otherwise.
-DEFAULT_PRACTICE_TEMPO = "60"
+# plan, so the Violy export starts slow unless told otherwise (quarter-note BPM).
+DEFAULT_SLOW_BY = "20"
+DEFAULT_UNMARKED_TEMPO = "40"
 
 app = Flask(__name__, static_folder="static", static_url_path="/static")
 app.config["MAX_CONTENT_LENGTH"] = int(os.environ.get("MAX_UPLOAD_MB", "40")) * 1024 * 1024
@@ -71,7 +72,7 @@ def _zip(files) -> io.BytesIO:
     return buf
 
 
-def _violy_readme(title, composer, tempo, practice_tempo, excluded, mscz_errors, mscz_written) -> str:
+def _violy_readme(title, composer, tempo, slow_by, unmarked_tempo, excluded, mscz_errors, mscz_written) -> str:
     lines = [
         "Violy Creator Studio export",
         "===========================",
@@ -86,11 +87,11 @@ def _violy_readme(title, composer, tempo, practice_tempo, excluded, mscz_errors,
         "  Set them yourself: in Violy's form, pick the title, instrument and",
         "  composer from Violy's lists. Typed text alone is ignored.",
         "* Tempo: %s" % (
-            "%g BPM (quarter note), written into every part." % tempo if tempo else
-            "each part starts at a practice tempo of at most %g BPM, marked on the score "
-            "with the original tempo. Violy lets you speed up from there."
-            % practice_tempo if practice_tempo else
-            "taken from the score, if it has one. Violy shows 100 BPM when a file has none."),
+            "forced to %g BPM (quarter note) in every part." % tempo if tempo else
+            "practice tempo, marked at the top of each part: the score's tempo minus "
+            "%s BPM, or %s BPM if the score has none. Speed it up in Violy as you learn it."
+            % ("%g" % slow_by if slow_by else "0", "%g" % unmarked_tempo if unmarked_tempo
+               else "Violy's default of 100")),
         "* Violy wants a MusicXML file AND a MuseScore .mscz file for each part.",
     ]
     if mscz_written:
@@ -172,21 +173,22 @@ def convert():
     title = (request.form.get("title") or "").strip() or None
     composer = (request.form.get("composer") or "").strip() or None
     tempos = {}
-    for field, default in (("tempo", ""), ("practice_tempo", DEFAULT_PRACTICE_TEMPO)):
+    for field, default, low in (("tempo", "", 10), ("slow_by", DEFAULT_SLOW_BY, 0),
+                                ("default_tempo", DEFAULT_UNMARKED_TEMPO, 10)):
         text = request.form.get(field, default).strip()
         try:
             tempos[field] = float(text) if text else None
         except ValueError:
             return _error(400, "%s must be a number of beats per minute." % field)
-        if tempos[field] is not None and not 10 <= tempos[field] <= 400:
-            return _error(400, "%s must be between 10 and 400 BPM." % field)
-    tempo = tempos["tempo"]
-    practice_tempo = None if tempo else tempos["practice_tempo"]
+        if tempos[field] is not None and not low <= tempos[field] <= 400:
+            return _error(400, "%s must be between %d and 400 BPM." % (field, low))
+    tempo, slow_by, unmarked_tempo = tempos["tempo"], tempos["slow_by"], tempos["default_tempo"]
     parts = {}
     for index, (name, blob) in enumerate(movements, start=1):
         try:
             split = split_for_violy(blob, title=title, composer=composer,
-                                    tempo=tempo, practice_tempo=practice_tempo)
+                                    tempo=tempo, slow_by=slow_by,
+                                    unmarked_tempo=unmarked_tempo)
         except (ValueError, KeyError) as e:
             return _error(422, "Could not split %s into Violy parts: %s" % (name, e),
                           kind="violy-split-failed")
@@ -201,7 +203,7 @@ def convert():
     else:
         mscz_files = {}
     files["READ-ME-violy.txt"] = _violy_readme(
-        title, composer, tempo, practice_tempo, result.excluded_sheets, mscz_errors, bool(mscz_files)).encode("utf-8")
+        title, composer, tempo, slow_by, unmarked_tempo, result.excluded_sheets, mscz_errors, bool(mscz_files)).encode("utf-8")
     response = send_file(_zip(files), mimetype="application/zip",
                          as_attachment=True, download_name=stem + "-violy.zip")
     response.headers.update(headers)
