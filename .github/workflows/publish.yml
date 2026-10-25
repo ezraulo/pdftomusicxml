@@ -7,7 +7,7 @@ name: Publish image
 
 on:
   push:
-    branches: [master]
+    branches: [main, master]   # master until the default branch is renamed to main
   workflow_dispatch:
 
 permissions:

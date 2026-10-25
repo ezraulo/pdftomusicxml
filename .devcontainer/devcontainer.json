@@ -1,5 +1,5 @@
 {
-  // GitHub Codespaces: Code > Codespaces > Create codespace on master. The app starts
+  // GitHub Codespaces: Code > Codespaces > Create codespace on main. The app starts
   // by itself; open the "Sheet music converter" port (8080) from the Ports tab.
   "name": "Sheet music converter",
   "image": "mcr.microsoft.com/devcontainers/base:ubuntu",

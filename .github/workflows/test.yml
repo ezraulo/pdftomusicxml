@@ -2,7 +2,7 @@ name: Test
 
 on:
   push:
-    branches: [master]
+    branches: [main, master]   # master until the default branch is renamed to main
   pull_request:
   workflow_dispatch:
 

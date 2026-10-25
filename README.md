@@ -21,7 +21,7 @@ docker run --rm -p 8080:8080 ghcr.io/ezraulo/pdftomusicxml:latest
 ```
 
 Then open <http://localhost:8080>. Stop it with Ctrl+C. The image is published from
-`master` by the *Publish image* workflow (built natively for both architectures); `docker pull ghcr.io/ezraulo/pdftomusicxml:latest`
+`main` by the *Publish image* workflow (built natively for both architectures); `docker pull ghcr.io/ezraulo/pdftomusicxml:latest`
 fetches a newer one.
 
 Or, from a copy of this repository, with Docker Compose (keeps running in the background):
@@ -42,7 +42,7 @@ Macs: Docker picks the right version by itself.
 A codespace is a cloud computer GitHub runs for you; this repository is set up so the
 app starts in it by itself.
 
-1. On the repository page, choose **Code > Codespaces > Create codespace on master**
+1. On the repository page, choose **Code > Codespaces > Create codespace on main**
    (the default 2-core machine is enough).
 2. Wait for it to start: it fetches the image and starts the app (a minute or two; if
    the image can't be fetched it builds it, 10-15 minutes).
